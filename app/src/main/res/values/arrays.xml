@@ -1,0 +1,26 @@
+<resources>
+    <string-array name="label_types">
+        <item>睡眠</item>
+        <item>静息</item>
+        <item>吃饭</item>
+        <item>运动</item>
+        <item>认知训练</item>
+        <item>放松训练</item>
+        <item>激励训练</item>
+        <item>评估模式</item>
+        <item>自定义</item>
+    </string-array>
+    
+    <string-array name="ecg_options">
+        <item>ecg1</item>
+        <item>ecg2</item>
+        <item>ecg3</item>
+    </string-array>
+    
+    <string-array name="hrv_options">
+        <item>心率</item>
+        <item>meanHR</item>
+        <item>RMSSD</item>
+        <item>SDNN</item>
+    </string-array>
+</resources>

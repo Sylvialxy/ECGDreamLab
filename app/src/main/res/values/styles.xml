@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="CustomButtonStyle" parent="Widget.MaterialComponents.Button">
+    <item name="android:background">@drawable/square_button_background</item>
+    <item name="backgroundTint">@null</item> <!-- 确保没有背景色调 -->
+    <item name="android:textColor">#FFFFFF</item> <!-- 可选：设置文字颜色 -->
+</style>
+</resources>
