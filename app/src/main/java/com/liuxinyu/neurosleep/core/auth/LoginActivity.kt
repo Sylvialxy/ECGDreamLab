@@ -3,6 +3,7 @@ package com.liuxinyu.neurosleep.core.auth
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -13,11 +14,12 @@ import com.liuxinyu.neurosleep.databinding.ActivityLoginBinding
 import com.liuxinyu.neurosleep.util.user.AuthManager
 import com.liuxinyu.neurosleep.util.user.InputValidator
 import com.liuxinyu.neurosleep.util.user.UserViewModel
+import com.liuxinyu.neurosleep.util.user.UserViewModelFactory
 import kotlinx.coroutines.launch
 
 class LoginActivity : AppCompatActivity() {
     private lateinit var binding: ActivityLoginBinding
-    private val viewModel: UserViewModel by viewModels()
+    private val viewModel: UserViewModel by viewModels { UserViewModelFactory(this) }
     private var isPasswordVisible = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,11 +87,13 @@ class LoginActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val response = viewModel.login(phone, password)
-                if (response.code == 0) {  // 检查 code 是否为 0
+                if (response.code == "00000") {  // 检查 code 是否为 0
                     // 登录成功
                     val token = response.data?.token
                     if (token != null) {
                         // 保存token和手机号
+                        Log.d("LoginActivity", "Saving token: ${token.take(10)}...")
+                        Log.d("LoginActivity", "Full token for debugging: $token")
                         AuthManager.saveToken(this@LoginActivity, token)
                         AuthManager.savePhone(this@LoginActivity, phone)
                         // 保存记住密码设置

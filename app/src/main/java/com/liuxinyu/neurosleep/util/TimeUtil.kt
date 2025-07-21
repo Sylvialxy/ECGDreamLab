@@ -8,7 +8,7 @@ import java.time.format.DateTimeFormatter
 object TimeUtil {
     // 设置时区为中国大陆
     fun getCurrentDateTime(): String? {
-        return DateTimeFormatter.ofPattern("yyyy-MM-dd-hh-mm-ss").format(LocalDateTime.now())
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss").format(LocalDateTime.now())
     }
 
     fun getFormattedDateTime(): FormattedTime {

@@ -15,12 +15,13 @@ import com.liuxinyu.neurosleep.databinding.ActivityRegisterBinding
 import com.liuxinyu.neurosleep.data.network.ApiResponse
 import com.liuxinyu.neurosleep.util.user.InputValidator
 import com.liuxinyu.neurosleep.util.user.UserViewModel
+import com.liuxinyu.neurosleep.util.user.UserViewModelFactory
 import kotlinx.coroutines.launch
 
 
 class RegisterActivity : AppCompatActivity() {
     private lateinit var binding: ActivityRegisterBinding
-    private val viewModel: UserViewModel by viewModels()
+    private val viewModel: UserViewModel by viewModels { UserViewModelFactory(this) }
     private var isPasswordVisible = false
     private var isConfirmPasswordVisible = false
 
@@ -156,7 +157,7 @@ class RegisterActivity : AppCompatActivity() {
     }
 
     private fun handleRegisterResult(apiresponse: ApiResponse<Unit>) {
-        if (apiresponse.code == 200) {
+        if (apiresponse.code == "00000") {
             showToast("注册成功")
             startActivity(Intent(this, LoginActivity::class.java))
             finish()

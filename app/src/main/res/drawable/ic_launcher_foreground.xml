@@ -1,21 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  ~ Copyright (C) 2023 The Android Open Source Project
-  ~
-  ~ Licensed under the Apache License, Version 2.0 (the "License");
-  ~ you may not use this file except in compliance with the License.
-  ~ You may obtain a copy of the License at
-  ~
-  ~     https://www.apache.org/licenses/LICENSE-2.0
-  ~
-  ~ Unless required by applicable law or agreed to in writing, software
-  ~ distributed under the License is distributed on an "AS IS" BASIS,
-  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  ~ See the License for the specific language governing permissions and
-  ~ limitations under the License.
-  -->
-
-<!-- res/drawable/ic_foreground.xml -->
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/app_icon_32"
-    android:gravity="center"/>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108"
+    android:tint="#FFFFFF">
+    <group android:scaleX="0.22"
+        android:scaleY="0.22"
+        android:translateX="29.16"
+        android:translateY="29.16">
+        
+        <!-- ECG Line -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M20,90 L60,90 L70,50 L85,130 L100,90 L120,90 L140,90 L160,50 L175,130 L190,90 L230,90"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+            
+        <!-- Moon Symbol -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M125,30 C110,30 100,45 100,60 C100,75 110,90 125,90 C115,90 95,80 95,60 C95,40 115,30 125,30z" />
+            
+        <!-- Heart Symbol -->
+        <path
+            android:fillColor="#FF5252"
+            android:pathData="M125,160 C118,150 105,140 90,150 C75,160 75,180 90,190 C105,200 125,180 125,160z M125,160 C132,150 145,140 160,150 C175,160 175,180 160,190 C145,200 125,180 125,160z" />
+    </group>
+</vector>

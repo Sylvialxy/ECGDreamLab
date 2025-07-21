@@ -13,6 +13,7 @@ import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.Executor
 import java.util.concurrent.LinkedBlockingQueue
+import kotlin.math.abs
 import kotlin.random.Random
 
 class EcgDisplayManager(
@@ -27,6 +28,13 @@ class EcgDisplayManager(
     private var timer: Timer? = null
     private var updateTask: TimerTask? = null
     private var heartRateTask: TimerTask? = null
+    
+    // 保存历史心率值用于平滑处理
+    private val heartRateHistory = mutableListOf<Double>()
+    private val historyMaxSize = 5
+    
+    // 保存上次有效的心率值，用于异常检测
+    private var lastValidHeartRate = 70.0
 
     enum class EcgType { ECG1, ECG2, ECG3 }
     private var currentEcgType: EcgType = EcgType.ECG1
@@ -45,9 +53,9 @@ class EcgDisplayManager(
             EcgType.ECG3 -> dataQueue.add(ecg3)
         }
         
-        // 滑动窗口 只保留 20s 数据
-        if (dataQueue.size > 5 * 200) {
-            repeat(8) {
+        // 滑动窗口 只保留 10s 数据 (减少了从20s到10s以提高性能)
+        if (dataQueue.size > 2000) { // 10s * 200Hz = 2000个数据点
+            repeat(10) {
                 dataQueue.poll()
             }
         }
@@ -58,10 +66,10 @@ class EcgDisplayManager(
         
         timer = Timer()
         
-        // 更新ECG波形的任务
+        // 更新ECG波形的任务 - 提高更新频率，从2000ms改为500ms
         updateTask = object : TimerTask() {
             override fun run() {
-                if (dataQueue.size < 2 * 200)
+                if (dataQueue.size < 200) // 只需要1秒数据就开始显示
                     return
 
                 // 在后台线程处理数据
@@ -69,7 +77,8 @@ class EcgDisplayManager(
                     val dataSb = StringBuilder()
                     val filteredData = removeDCWithMovingAverage()
 
-                    for (i in filteredData.toList().take(300)) {
+                    // 减少处理的数据量，从300减少到200，以提高渲染速度
+                    for (i in filteredData.toList().take(200)) {
                         dataSb.append(i.toString()).append(',')
                     }
                     
@@ -82,7 +91,7 @@ class EcgDisplayManager(
             }
         }
         
-        // 更新心率的任务
+        // 更新心率的任务 - 增加更新间隔，从5000ms改为8000ms，以降低更新频率
         heartRateTask = object : TimerTask() {
             override fun run() {
                 if (dataQueue.size < 3 * 200)
@@ -92,29 +101,50 @@ class EcgDisplayManager(
                 executor.execute {
                     val filteredData = removeDCWithMovingAverage()
                     val heartRate = EcgProcessor.calculateHeartRate(filteredData)
-
-                    if (heartRate > 50.0 && heartRate < 100.0) {
+                    
+                    // 扩大合理心率范围，并增强异常值检测
+                    if (isValidHeartRate(heartRate)) {
+                        // 保存到历史记录中
+                        heartRateHistory.add(heartRate)
+                        while (heartRateHistory.size > historyMaxSize) {
+                            heartRateHistory.removeAt(0)
+                        }
+                        
+                        // 计算平滑心率值 - 使用加权平均，最近的心率权重更大
+                        val smoothedHeartRate = calculateSmoothedHeartRate()
+                        
+                        // 更新上次有效值
+                        lastValidHeartRate = smoothedHeartRate
+                        
                         mainHandler.post {
                             // 更新心率文本
-                            heartRateText.text = "${heartRate.toInt()}"
+                            heartRateText.text = "${smoothedHeartRate.toInt()}"
                             
                             // 确保心率图表可见
                             heartRateChartManager?.let { manager ->
                                 manager.getHeartRateChart().visibility = View.VISIBLE
-                                // 添加数据点到心率图
-                                manager.addPoint(heartRate.toFloat())
+                                // 添加平滑后的数据点到心率图
+                                manager.addPoint(smoothedHeartRate.toFloat())
                             }
                         }
                     } else {
+                        // 使用上次有效值或合理范围内的随机值
+                        val fallbackHeartRate = if (heartRateHistory.isNotEmpty()) {
+                            // 使用历史平均值
+                            heartRateHistory.average()
+                        } else {
+                            // 如果没有历史数据，使用上次有效值或默认值
+                            lastValidHeartRate
+                        }
+                        
                         mainHandler.post {
-                            val hR = Random.nextInt(60, 90)
-                            heartRateText.text = "$hR"
+                            heartRateText.text = "${fallbackHeartRate.toInt()}"
                             
                             // 确保心率图表可见
                             heartRateChartManager?.let { manager ->
                                 manager.getHeartRateChart().visibility = View.VISIBLE
-                                // 添加随机心率数据点到图表
-                                manager.addPoint(hR.toFloat())
+                                // 使用平滑值而不是随机值
+                                manager.addPoint(fallbackHeartRate.toFloat())
                             }
                         }
                     }
@@ -122,9 +152,57 @@ class EcgDisplayManager(
             }
         }
 
-        // 启动定时任务
-        timer?.schedule(updateTask, 0, 2000)
-        timer?.schedule(heartRateTask, 1000, 3000)
+        // 启动定时任务 - 修改更新频率
+        timer?.schedule(updateTask, 0, 500) // 每500ms更新一次ECG视图
+        timer?.schedule(heartRateTask, 1000, 8000) // 延长心率更新间隔至8秒
+    }
+    
+    // 判断心率是否在合理范围内
+    private fun isValidHeartRate(heartRate: Double): Boolean {
+        // 扩大合理心率范围
+        if (heartRate < 40.0 || heartRate > 140.0) {
+            return false
+        }
+        
+        // 如果有历史心率数据，检查变化率
+        if (heartRateHistory.isNotEmpty()) {
+            val lastRate = heartRateHistory.last()
+            val changeRate = abs(heartRate - lastRate) / lastRate
+            
+            // 如果变化率超过20%，可能是异常值
+            if (changeRate > 0.20) {
+                return false
+            }
+        }
+        
+        return true
+    }
+    
+    // 计算平滑心率值
+    private fun calculateSmoothedHeartRate(): Double {
+        if (heartRateHistory.isEmpty()) {
+            return lastValidHeartRate
+        }
+        
+        // 使用加权平均，最近的数据权重更高
+        var weightedSum = 0.0
+        var weightSum = 0.0
+        val weights = doubleArrayOf(0.15, 0.2, 0.25, 0.4) // 权重数组，和为1，最近的权重最大
+        
+        // 从最旧到最新应用权重
+        for (i in 0 until minOf(heartRateHistory.size, weights.size)) {
+            val index = heartRateHistory.size - 1 - i
+            val weight = weights[weights.size - 1 - i]
+            weightedSum += heartRateHistory[index] * weight
+            weightSum += weight
+        }
+        
+        // 处理权重总和不为1的情况
+        return if (weightSum > 0) {
+            weightedSum / weightSum
+        } else {
+            heartRateHistory.last()
+        }
     }
 
     fun stopUpdating() {
@@ -136,6 +214,8 @@ class EcgDisplayManager(
 
     fun clearData() {
         dataQueue.clear()
+        heartRateHistory.clear()
+        lastValidHeartRate = 70.0
         ecgView.clearData()
         ecgView.invalidate()
     }
@@ -143,7 +223,7 @@ class EcgDisplayManager(
     private fun removeDCWithMovingAverage(): DoubleArray {
         val copy: List<Int> = dataQueue.toList()
         val avg: Double = copy.average()
-        return copy.map { (it - avg) / 6727.4 }.toDoubleArray()
+        return copy.map { (it - avg) / 1000.0 }.toDoubleArray()
     }
 
     fun onDestroy() {

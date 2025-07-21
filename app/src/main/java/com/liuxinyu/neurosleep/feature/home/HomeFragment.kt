@@ -2,6 +2,7 @@ package com.liuxinyu.neurosleep.feature.home
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Context.MODE_PRIVATE
 import android.content.Intent
 import android.net.Uri
@@ -33,6 +34,10 @@ import com.liuxinyu.neurosleep.data.model.EcgLabel
 import com.liuxinyu.neurosleep.data.model.EcgLabelDTO
 import com.liuxinyu.neurosleep.data.network.RetrofitClient
 import com.liuxinyu.neurosleep.data.network.UserApiService
+import com.liuxinyu.neurosleep.data.network.PresignedUploadRequest
+import com.liuxinyu.neurosleep.data.network.CompleteMultipartUploadRequest
+import com.liuxinyu.neurosleep.data.network.UploadPart
+import com.liuxinyu.neurosleep.data.network.FileUploadRequest
 import com.liuxinyu.neurosleep.data.repository.EcgLabelRepository
 import com.liuxinyu.neurosleep.databinding.FragmentHomeBinding
 import com.liuxinyu.neurosleep.feature.home.experiment.JoinExperimentFragment
@@ -55,6 +60,8 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.LinkedList
 import java.util.Timer
+import com.liuxinyu.neurosleep.data.network.FileUploadRecallItem
+import com.liuxinyu.neurosleep.data.network.FileUploadRecallRequest
 
 class HomeFragment : Fragment() {
 
@@ -74,7 +81,20 @@ class HomeFragment : Fragment() {
         const val TAG = "HomeFragment"
     }
 
-    private var selectedFile: File? = null
+    /**
+     * 处理 token 过期的情况
+     */
+    private fun handleTokenExpired() {
+        Toast.makeText(requireContext(), "登录已过期，请重新登录", Toast.LENGTH_LONG).show()
+        // 清除过期的 token
+        AuthManager.clearToken(requireContext())
+
+        // 跳转到登录页面
+        val intent = Intent(requireContext(), com.liuxinyu.neurosleep.core.auth.LoginActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        startActivity(intent)
+        requireActivity().finish()
+    }
 
     // DrawerLayout 控件
     private lateinit var drawerLayout: DrawerLayout
@@ -245,22 +265,40 @@ class HomeFragment : Fragment() {
         val fileSize = contentResolver.openFileDescriptor(uri, "r")?.statSize ?: return
         val fileName = getFileName(uri)
 
-        val bufferSize = 1 * 1024 * 1024 // 每块 1MB
+        val bufferSize = 5 * 1024 * 1024 // 每块 5MB
         val totalChunks = ((fileSize + bufferSize - 1) / bufferSize).toInt()
 
-        val snCode = "SN123456"  // 示例 SNCode
-
-        val token = AuthManager.getToken(requireContext())
-        if (token.isNullOrEmpty()) {
-            Log.e(TAG, "Token is null or empty")
-            Toast.makeText(requireContext(), "Token is missing", Toast.LENGTH_SHORT).show()
+        // 从SharedPreferences获取真实的SNCode
+        val sharedPref = requireContext().getSharedPreferences("BLE_PREFS", Context.MODE_PRIVATE)
+        val snCode = sharedPref.getString("SN_CODE", null) ?: run {
+            Log.e(TAG, "SNCode not found, please connect to device first")
+            Toast.makeText(requireContext(), "请先连接设备", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val experimentId = 1     // 示例 ExperimentId，可为 null
+        val token = AuthManager.getFormattedToken(requireContext())
+        if (token.isNullOrEmpty()) {
+            Log.e(TAG, "Token is null or empty")
+            Toast.makeText(requireContext(), "请重新登录", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        Log.d(TAG, "Token retrieved: ${token.take(15)}...")
+
+        // 验证 token 格式（简单检查）
+        if (token.length < 10) {
+            Log.e(TAG, "Token seems too short, might be invalid")
+            Toast.makeText(requireContext(), "Token 格式异常，请重新登录", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 直接检查标签并开始上传，如果 token 无效会在上传时处理
+        Log.d(TAG, "Starting upload process...")
+
+        val experimentId = 1  // 示例 ExperimentId，可为 null
         val currentLabels = viewModel.labels.value
         Log.d(TAG, "Current labels size: ${currentLabels.size}")
-        
+
         if (currentLabels.isEmpty()) {
             Log.e(TAG, "No valid label data found")
             Toast.makeText(requireContext(), "无有效标签数据", Toast.LENGTH_SHORT).show()
@@ -269,6 +307,7 @@ class HomeFragment : Fragment() {
 
         // 检查是否有未完成的标签
         val unfinishedLabel = currentLabels.find { it.endTime == null }
+
         if (unfinishedLabel != null) {
             // 显示确认对话框
             AlertDialog.Builder(requireContext())
@@ -288,6 +327,8 @@ class HomeFragment : Fragment() {
             proceedWithUpload(uri, inputStream, fileSize, fileName, bufferSize, totalChunks, snCode, token, experimentId)
         }
     }
+
+
 
     private fun proceedWithUpload(
         uri: Uri,
@@ -311,87 +352,194 @@ class HomeFragment : Fragment() {
         val json = Gson().toJson(labelDTO)
         Log.d(TAG, "Serialized labelDTO: $json")
 
-        val retrofit = RetrofitClient.instance.create(UserApiService::class.java)
+        val retrofit = RetrofitClient.getInstance(requireContext()).create(UserApiService::class.java)
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-            inputStream.use { stream ->
-                val buffer = ByteArray(bufferSize)
-                var bytesRead: Int
-                var chunkIndex = 0
-                    var totalBytesUploaded = 0L
+                // 第一步：获取预签名上传URL
+                Log.d(TAG, "Step 1: Getting presigned upload URLs")
+                
+                // 使用新的API请求格式
+                val fileRequest = FileUploadRequest(
+                    originalFilename = fileName ?: "unknown.bin",
+                    contentType = "application/bin",
+                    partCount = totalChunks,
+                    SNCode = snCode,
+                    experimentId = experimentId,
+                    labelDTO = json
+                )
+                
+                val presignedRequest = PresignedUploadRequest(
+                    files = listOf(fileRequest)
+                )
 
-                while (true) {
-                    bytesRead = stream.read(buffer)
-                    if (bytesRead <= 0) break
-
-                    val chunkBytes = buffer.copyOf(bytesRead)
-                        totalBytesUploaded += bytesRead
-                        
-                        // 计算上传进度
-                        val progress = (totalBytesUploaded * 100 / fileSize).toInt()
-                        Log.d(TAG, "Uploading chunk $chunkIndex of $totalChunks (${progress}%)")
-                        
-                    val filePart = MultipartBody.Part.createFormData(
-                        "file", "$fileName.part$chunkIndex",
-                        chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull())
-                    )
-
-                    val chunkIndexBody = chunkIndex.toString().toRequestBody("text/plain".toMediaType())
-                    val totalChunksBody = totalChunks.toString().toRequestBody("text/plain".toMediaType())
-                    val snCodeBody = snCode.toRequestBody("text/plain".toMediaType())
-                    val experimentIdBody = experimentId?.toString()
-                        ?.toRequestBody("text/plain".toMediaType())
-
-                    val labelPart = if (chunkIndex == totalChunks - 1) {
-                            Log.d(TAG, "Uploading final chunk with label data")
-                        val json = Gson().toJson(labelDTO)
-                        MultipartBody.Part.createFormData(
-                            "labelDTO", "labelDTO.json",
-                            json.toRequestBody("application/json".toMediaType())
-                        )
-                    } else null
-
-                    try {
-                        val response = retrofit.uploadChunk(
-                            file = filePart,
-                            experimentId = experimentIdBody,
-                            chunkIndex = chunkIndexBody,
-                            totalChunks = totalChunksBody,
-                            snCode = snCodeBody,
-                            labelDTO = labelPart,
-                            token
-                        )
-                        withContext(Dispatchers.Main) {
-                                Log.d(TAG, "Chunk $chunkIndex uploaded successfully")
-                                // 更新进度
-                                val progressText = "上传进度: $progress%"
-                                Toast.makeText(requireContext(), progressText, Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Log.e(TAG, "Chunk upload failed", e)
-                                Toast.makeText(requireContext(), "分块 $chunkIndex 上传失败: ${e.message}", Toast.LENGTH_LONG).show()
-                        }
-                        break
+                // 确保token格式正确
+                val formattedToken = if (!token.startsWith("Bearer ")) "Bearer $token" else token
+                val presignedResponse = retrofit.getPresignedUploadUrls(presignedRequest, formattedToken)
+                if (presignedResponse.code != "00000" || presignedResponse.data == null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "获取上传URL失败: ${presignedResponse.msg}", Toast.LENGTH_LONG).show()
                     }
-
-                    chunkIndex++
+                    return@launch
                 }
 
-                    // 所有分块上传成功后，清空标签数据
-                    viewModel.clearSession()
-                    
+                val uploadMeta = presignedResponse.data.filesUploadMeta.firstOrNull()
+                if (uploadMeta == null) {
                     withContext(Dispatchers.Main) {
-                        Log.d(TAG, "File upload completed successfully")
-                        Toast.makeText(requireContext(), "上传完成", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "上传元数据为空", Toast.LENGTH_LONG).show()
                     }
+                    return@launch
+                }
+
+                Log.d(TAG, "Got upload meta: uploadId=${uploadMeta.uploadId}, chunks=${uploadMeta.chunkPresignedUrls.size}")
+
+                // 第二步：使用预签名URL上传各个分片
+                Log.d(TAG, "Step 2: Uploading chunks using presigned URLs")
+                val uploadedParts = mutableListOf<UploadPart>()
+                var uploadSuccess = true
+
+                inputStream.use { stream ->
+                    val buffer = ByteArray(bufferSize)
+                    var bytesRead: Int
+                    var chunkIndex = 0
+                    var totalBytesUploaded = 0L
+
+                    for (chunkUrl in uploadMeta.chunkPresignedUrls) {
+                        bytesRead = stream.read(buffer)
+                        if (bytesRead <= 0) break
+
+                        val chunkBytes = buffer.copyOf(bytesRead)
+                        totalBytesUploaded += bytesRead
+
+                        // 计算上传进度
+                        val progress = (totalBytesUploaded * 100 / fileSize).toInt()
+                        Log.d(TAG, "Uploading chunk ${chunkUrl.partNumber} of ${uploadMeta.chunkPresignedUrls.size} (${progress}%)")
+
+                        try {
+                            val chunkBody = chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull())
+                            val response = retrofit.uploadChunkToPresignedUrl(chunkUrl.presignedUrl, chunkBody)
+
+                            if (response.isSuccessful) {
+                                // 获取ETag
+                                val etag = response.headers()["ETag"]?.removeSurrounding("\"") ?: ""
+                                uploadedParts.add(UploadPart(chunkUrl.partNumber, etag))
+
+                                withContext(Dispatchers.Main) {
+                                    Log.d(TAG, "Chunk ${chunkUrl.partNumber} uploaded successfully, ETag: $etag")
+                                    val progressText = "上传进度: $progress%"
+                                    Toast.makeText(requireContext(), progressText, Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Log.e(TAG, "Chunk ${chunkUrl.partNumber} upload failed: ${response.code()}")
+                                uploadSuccess = false
+                                break
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Log.e(TAG, "Chunk ${chunkUrl.partNumber} upload failed", e)
+                                if (e.message?.contains("401") == true) {
+                                    handleTokenExpired()
+                                } else {
+                                    Toast.makeText(requireContext(), "分块 ${chunkUrl.partNumber} 上传失败: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                            uploadSuccess = false
+                            break
+                        }
+
+                        chunkIndex++
+                    }
+                }
+
+                // 第三步：完成多部分上传
+                if (uploadSuccess && uploadedParts.isNotEmpty()) {
+                    completeMultipartUpload(uploadMeta.objectName, uploadMeta.uploadId, uploadedParts, formattedToken, retrofit)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Log.e(TAG, "Upload failed", e)
                     Toast.makeText(requireContext(), "上传失败: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    /**
+     * 完成多部分上传，将已上传的分片合并为完整文件
+     * @param objectName 对象名称
+     * @param uploadId 上传ID
+     * @param parts 已上传的分片列表
+     * @param token 授权令牌
+     * @param retrofit Retrofit客户端
+     */
+    private suspend fun completeMultipartUpload(
+        objectName: String,
+        uploadId: String,
+        parts: List<UploadPart>,
+        token: String,
+        retrofit: UserApiService
+    ) {
+        try {
+            Log.d(TAG, "Step 3: Completing multipart upload")
+            Log.d(TAG, "Object name: $objectName")
+            Log.d(TAG, "Upload ID: $uploadId")
+            Log.d(TAG, "Parts count: ${parts.size}")
+            
+            // 构建请求体
+            val completeRequest = CompleteMultipartUploadRequest(
+                objectName = objectName,
+                uploadId = uploadId,
+                parts = parts
+            )
+
+            // 记录请求详情
+            val gson = Gson()
+            Log.d(TAG, "Complete request: ${gson.toJson(completeRequest)}")
+
+            // 调用API
+            val completeResponse = retrofit.completeMultipartUpload(completeRequest, token)
+            
+            // 处理响应
+            if (completeResponse.code == "00000") {
+                // 调用上传回调接口
+                try {
+                    val recallItem = FileUploadRecallItem(
+                        objectName = objectName,
+                        contentType = "application/bin" // 默认类型，根据实际情况修改
+                    )
+                    
+                    val recallRequest = FileUploadRecallRequest(
+                        recallList = listOf(recallItem)
+                    )
+                    
+                    Log.d(TAG, "Calling upload recall API with objectName: $objectName")
+                    val recallResponse = retrofit.fileUploadRecall(recallRequest, token)
+                    
+                    if (recallResponse.code == "00000") {
+                        Log.d(TAG, "Upload recall successful")
+                    } else {
+                        Log.w(TAG, "Upload recall failed with code: ${recallResponse.code}, message: ${recallResponse.msg}")
+                    }
+                } catch (e: Exception) {
+                    // 记录错误但不影响主流程
+                    Log.e(TAG, "Failed to call upload recall API", e)
+                }
+                
+                viewModel.clearSession()
+                withContext(Dispatchers.Main) {
+                    Log.d(TAG, "File upload completed successfully, response: ${completeResponse.data}")
+                    Toast.makeText(requireContext(), "上传完成", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    Log.e(TAG, "Complete upload failed with code: ${completeResponse.code}, message: ${completeResponse.msg}")
+                    Toast.makeText(requireContext(), "完成上传失败: ${completeResponse.msg}", Toast.LENGTH_LONG).show()
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Log.e(TAG, "Complete multipart upload failed with exception", e)
+                Toast.makeText(requireContext(), "文件合并失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }

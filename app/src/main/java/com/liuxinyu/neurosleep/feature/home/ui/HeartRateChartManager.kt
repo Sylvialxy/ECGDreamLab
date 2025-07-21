@@ -10,6 +10,7 @@ import com.yabu.livechart.model.Dataset
 import com.yabu.livechart.view.LiveChart
 import com.yabu.livechart.view.LiveChartStyle
 import java.util.LinkedList
+import kotlin.math.abs
 
 class HeartRateChartManager(
     private val context: Context,
@@ -18,8 +19,19 @@ class HeartRateChartManager(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val dataList = mutableListOf<DataPoint>()
     private val slidingWindow = LinkedList<DataPoint>()
-    private val slidingWindowSize = 20
-
+    private val slidingWindowSize = 40 // 增加窗口大小，使图表显示更多历史数据
+    
+    // 添加数据缓冲，用于控制更新频率
+    private val dataBuffer = LinkedList<Float>()
+    private val bufferThreshold = 15 // 增加缓冲阈值从5到15，累积更多数据再更新
+    
+    // 添加历史心率值列表，用于计算变化率和检测异常值
+    private val heartRateHistory = LinkedList<Float>()
+    private val historyMaxSize = 10
+    
+    // 添加最大变化率限制
+    private val maxChangeRate = 0.15f // 最大允许变化率15%
+    
     private var currentScale = 1.0f
     private val MIN_SCALE = 0.5f
     private val MAX_SCALE = 2.0f
@@ -43,6 +55,10 @@ class HeartRateChartManager(
     private var dataMinValue = Float.MAX_VALUE
     private var dataMaxValue = Float.MIN_VALUE
     private var autoAdjustRange = true
+    
+    // 添加上次更新时间追踪
+    private var lastUpdateTime = System.currentTimeMillis()
+    private val UPDATE_INTERVAL = 3000 // 增加更新间隔从2秒到3秒
 
     init {
         setupChart()
@@ -58,6 +74,8 @@ class HeartRateChartManager(
             // 初始化图表 - 确保至少有两个数据点
             slidingWindow.clear()
             dataList.clear()
+            dataBuffer.clear()
+            heartRateHistory.clear()
             
             // 重置数据范围追踪
             dataMinValue = Float.MAX_VALUE
@@ -70,6 +88,9 @@ class HeartRateChartManager(
             
             dataList.add(DataPoint(0f, initialValue))
             dataList.add(DataPoint(1f, initialValue))
+            
+            // 初始化历史心率列表
+            heartRateHistory.add(initialValue)
             
             // 设置数据集并应用样式
             heartRateChart.setDataset(Dataset(dataList))
@@ -107,9 +128,77 @@ class HeartRateChartManager(
 
     fun addPoint(value: Float) {
         try {
+            // 将数据加入缓冲区
+            dataBuffer.add(value)
+            
+            // 检查时间间隔和缓冲区大小，控制更新频率
+            val currentTime = System.currentTimeMillis()
+            if (dataBuffer.size < bufferThreshold && currentTime - lastUpdateTime < UPDATE_INTERVAL) {
+                // 不满足更新条件，等待更多数据或更长时间
+                return
+            }
+            
+            // 排序缓冲区数值并使用中位数过滤异常值
+            val sortedValues = dataBuffer.sorted()
+            val medianValue = if (sortedValues.size % 2 == 0) {
+                (sortedValues[sortedValues.size / 2 - 1] + sortedValues[sortedValues.size / 2]) / 2f
+            } else {
+                sortedValues[sortedValues.size / 2]
+            }
+            
+            // 计算缓冲区中值的平均值，减少噪声，但排除最大和最小值（如果数据点足够多）
+            val avgValue = if (dataBuffer.size >= 5) {
+                sortedValues.subList(1, sortedValues.size - 1).average().toFloat()
+            } else if (dataBuffer.isNotEmpty()) {
+                dataBuffer.average().toFloat()
+            } else {
+                value
+            }
+            
+            // 根据中位数和平均值的接近程度判断数据质量
+            val finalValue = if (abs(medianValue - avgValue) > 10) {
+                // 如果中位数和平均值相差太大，可能有异常值，优先使用中位数
+                medianValue
+            } else {
+                // 否则使用平均值
+                avgValue
+            }
+            
+            // 应用平滑处理 - 将新值与历史数据进行加权平均
+            var smoothedValue = finalValue
+            if (heartRateHistory.isNotEmpty()) {
+                val lastValue = heartRateHistory.last()
+                // 检查变化率，如果变化过大则限制
+                val changeRate = abs(finalValue - lastValue) / lastValue
+                if (changeRate > maxChangeRate) {
+                    // 限制变化幅度
+                    val maxChange = lastValue * maxChangeRate
+                    smoothedValue = if (finalValue > lastValue) {
+                        lastValue + maxChange
+                    } else {
+                        lastValue - maxChange
+                    }
+                }
+                
+                // 应用额外的平滑处理 - 加权平均
+                smoothedValue = lastValue * 0.4f + smoothedValue * 0.6f
+            }
+            
+            // 清空缓冲区
+            dataBuffer.clear()
+            
+            // 记录本次更新时间
+            lastUpdateTime = currentTime
+            
+            // 更新历史心率列表
+            heartRateHistory.add(smoothedValue)
+            while (heartRateHistory.size > historyMaxSize) {
+                heartRateHistory.removeFirst()
+            }
+            
             // 记录数据范围以便自动调整
-            if (value < dataMinValue) dataMinValue = value
-            if (value > dataMaxValue) dataMaxValue = value
+            if (smoothedValue < dataMinValue) dataMinValue = smoothedValue
+            if (smoothedValue > dataMaxValue) dataMaxValue = smoothedValue
             
             // 如果启用了自动调整范围，并且数据超出当前范围，则调整范围
             if (autoAdjustRange) {
@@ -122,10 +211,8 @@ class HeartRateChartManager(
                 }
             }
             
-            // 确保值在合理范围内进行显示
-            val normalizedValue = value
-            
-            slidingWindow.add(DataPoint(0f, normalizedValue))
+            // 添加平滑后的值到滑动窗口
+            slidingWindow.add(DataPoint(0f, smoothedValue))
             if (slidingWindow.size > slidingWindowSize) {
                 slidingWindow.pollFirst()
                 dataList.clear()
@@ -133,12 +220,12 @@ class HeartRateChartManager(
                     dataList.add(DataPoint(index.toFloat(), point.y))
                 }
             } else {
-                dataList.add(DataPoint(slidingWindow.size.toFloat() - 1, normalizedValue))
+                dataList.add(DataPoint(slidingWindow.size.toFloat() - 1, smoothedValue))
             }
 
             // 确保数据集至少有两个点
             if (dataList.size < 2) {
-                dataList.add(DataPoint(1f, normalizedValue))
+                dataList.add(DataPoint(1f, smoothedValue))
             }
 
             mainHandler.post {
@@ -188,6 +275,20 @@ class HeartRateChartManager(
         }
     }
 
+    // 清除所有数据并重置图表
+    fun clearData() {
+        slidingWindow.clear()
+        dataList.clear()
+        dataBuffer.clear()
+        heartRateHistory.clear()
+        
+        // 重置数据范围追踪
+        dataMinValue = Float.MAX_VALUE
+        dataMaxValue = Float.MIN_VALUE
+        
+        setupChart()
+    }
+
     // 获取当前图表类型的初始值
     private fun getInitialValueForType(type: String): Float {
         return when (type) {
@@ -235,8 +336,9 @@ class HeartRateChartManager(
         
         return LiveChartStyle().apply {
             this.mainColor = mainColor
-            pathStrokeWidth = 8f * currentScale
-            secondPathStrokeWidth = 4f * currentScale
+            // 将线条变细
+            pathStrokeWidth = 3f * currentScale
+            secondPathStrokeWidth = 2f * currentScale
             textHeight = 40f * currentScale
             textColor = Color.GRAY
             overlayLineColor = Color.BLUE
@@ -246,34 +348,5 @@ class HeartRateChartManager(
             // 移除不支持的属性设置
             // LiveChartStyle不支持自定义网格线
         }
-    }
-
-    fun clearData() {
-        slidingWindow.clear()
-        dataList.clear()
-        
-        // 重置数据范围追踪
-        dataMinValue = Float.MAX_VALUE
-        dataMaxValue = Float.MIN_VALUE
-        
-        // 根据当前图表类型设置初始值
-        val initialValue = getInitialValueForType(chartType)
-        
-        // 重置为两个初始数据点
-        slidingWindow.add(DataPoint(0f, initialValue))
-        slidingWindow.add(DataPoint(1f, initialValue))
-        
-        dataList.add(DataPoint(0f, initialValue))
-        dataList.add(DataPoint(1f, initialValue))
-        
-        // 重设Y轴范围
-        val (min, max) = rangeMap[chartType] ?: Pair(0f, 100f)
-        minValue = min
-        maxValue = max
-        
-        // 使用updateChartBounds确保正确设置Y轴范围
-        updateChartBounds()
-        
-        heartRateChart.invalidate()
     }
 } 

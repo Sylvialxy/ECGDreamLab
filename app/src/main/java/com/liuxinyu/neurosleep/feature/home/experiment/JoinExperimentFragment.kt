@@ -42,7 +42,7 @@ class JoinExperimentFragment : Fragment() {
             }
 
             // 获取用户Token
-            val token = AuthManager.getToken(requireContext())
+            val token = AuthManager.getFormattedToken(requireContext())
             if (token.isNullOrEmpty()) {
                 Toast.makeText(requireContext(), "请先登录", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -51,7 +51,7 @@ class JoinExperimentFragment : Fragment() {
             // 调用加入实验的API
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    val response = RetrofitClient.instance.create(UserApiService::class.java)
+                    val response = RetrofitClient.getInstance(requireContext()).create(UserApiService::class.java)
                         .joinExperiment(inviteCode, token)
                     
                     withContext(Dispatchers.Main) {

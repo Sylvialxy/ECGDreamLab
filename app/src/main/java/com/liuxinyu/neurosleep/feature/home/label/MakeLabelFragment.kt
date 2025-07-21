@@ -117,6 +117,9 @@ class MakeLabelFragment : Fragment() {
                         view?.findViewById<View>(R.id.selectlabel_button)?.visibility = View.GONE
                         view?.findViewById<View>(R.id.checklabel_button)?.visibility = View.GONE
                         view?.findViewById<View>(R.id.end_button)?.visibility = View.VISIBLE
+                        
+                        // 重要修改：根据实际开始时间设置计时器基准
+                        setChronometer(currentLabel.startTime)
                     } else {
                         // 重置UI状态
                         statusLayout.visibility = View.GONE
@@ -275,9 +278,8 @@ class MakeLabelFragment : Fragment() {
                         chronometer.visibility = View.VISIBLE
                         view?.findViewById<View>(R.id.end_button)?.visibility = View.VISIBLE
 
-                        // 启动计时器
-                        chronometer.base = SystemClock.elapsedRealtime()
-                        chronometer.start()
+                        // 启动计时器 - 修改为使用新方法
+                        setChronometer(now)
 
                         // 根据模式启动相应的计时器
                         if (isCountdown) {
@@ -673,6 +675,27 @@ class MakeLabelFragment : Fragment() {
             LabelType.MOTIVATIONAL_TRAINING -> "激励训练"
             LabelType.ASSESSMENT_MODE -> "评估模式"
             LabelType.CUSTOM -> "自定义"
+        }
+    }
+
+    // 添加一个新方法，用于根据开始时间设置计时器的基准值
+    private fun setChronometer(startTime: LocalDateTime) {
+        try {
+            // 计算从开始时间到现在的时间差（以毫秒为单位）
+            val now = LocalDateTime.now()
+            val durationMillis = Duration.between(startTime, now).toMillis()
+            
+            // 设置计时器的基准值为当前时间减去已经经过的时间
+            val baseTime = SystemClock.elapsedRealtime() - durationMillis
+            chronometer.base = baseTime
+            chronometer.start()
+            
+            Log.d("MakeLabelFragment", "设置计时器基准: 经过${durationMillis/1000}秒")
+        } catch (e: Exception) {
+            Log.e("MakeLabelFragment", "设置计时器基准值失败", e)
+            // 失败时使用当前时间
+            chronometer.base = SystemClock.elapsedRealtime()
+            chronometer.start()
         }
     }
 

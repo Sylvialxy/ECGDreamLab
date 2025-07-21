@@ -56,6 +56,7 @@ import com.yabu.livechart.view.LiveChart
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import android.content.Context
+import android.content.Context.MODE_PRIVATE
 import com.liuxinyu.neurosleep.core.ble.BleClient
 import com.liuxinyu.neurosleep.core.ble.EcgProcessor
 
@@ -107,6 +108,10 @@ class BluetoothDataActivity : AppCompatActivity() {
     private lateinit var status_label: TextView
     private lateinit var rootLayout: ConstraintLayout
     private lateinit var chartSelector2: Spinner
+    private lateinit var connectedDeviceLayout: LinearLayout
+    private lateinit var connectedDeviceInfo: TextView
+    private lateinit var disconnectButton: MaterialButton
+    private lateinit var deviceSignalStrength: TextView
     private var hrvDataType = "心率" // 默认显示心率
     private val hrvDataTypes = arrayOf("心率", "meanHR", "RMSSD", "SDNN")
     
@@ -116,6 +121,7 @@ class BluetoothDataActivity : AppCompatActivity() {
     private lateinit var repository: EcgLabelRepository
     private val mainHandler = Handler(Looper.getMainLooper())
     private var selectedLabelType: LabelType = LabelType.SLEEP
+    private lateinit var bleClient: BleClient
 
     // ECG缩放相关变量
     private var currentScale = 1.0f
@@ -129,7 +135,7 @@ class BluetoothDataActivity : AppCompatActivity() {
         setContentView(R.layout.activity_bluetooth_data)
 
         // 初始化BleClient
-        val bleClient = BleClient(this)
+        bleClient = BleClient(this)
         
         // 初始化ViewModels
         val bluetoothViewModelFactory = BluetoothViewModel.Factory(bleClient)
@@ -206,14 +212,38 @@ class BluetoothDataActivity : AppCompatActivity() {
 
         // 观察是否连接
         bluetoothViewModel.isConnected.observe(this) { connected ->
-            if (!connected) {
-                // 重置UI
-                chronometer.stop()
-                chronometer.base = SystemClock.elapsedRealtime()
-                heartRateChart.visibility = View.INVISIBLE
-                ecgDisplayManager.clearData()
-                heartRateChartManager.clearData()
+            updateUIForConnectionState(connected)
+            
+            // 更新连接设备信息UI
+            if (connected) {
+                updateConnectedDeviceInfo()
+                
+                // 当连接成功后，添加延迟检查以确保传输状态正确恢复
+                mainHandler.postDelayed({
+                    if (bluetoothViewModel.isTransferring.value != true && bleClient.shouldRestoreTransfer()) {
+                        Log.d(TAG, "连接成功后检查：应该恢复传输但未恢复，强制恢复")
+                        bluetoothViewModel.startTransferring()
+                    }
+                }, 2000)
+            } else {
+                // 隐藏连接设备信息
+                connectedDeviceLayout.visibility = View.GONE
             }
+        }
+        
+        // 观察采集状态
+        bluetoothViewModel.isCollecting.observe(this) { isCollecting ->
+            updateUIForCollectionState(isCollecting)
+        }
+        
+        // 观察传输状态
+        bluetoothViewModel.isTransferring.observe(this) { isTransferring ->
+            updateUIForTransferState(isTransferring)
+        }
+        
+        // 观察计时器状态
+        bluetoothViewModel.collectionStartTime.observe(this) { startTime ->
+            updateChronometer(startTime)
         }
 
         // 观察ECG数据变化
@@ -246,6 +276,65 @@ class BluetoothDataActivity : AppCompatActivity() {
             }
         }
     }
+    
+    // 更新连接状态的UI
+    private fun updateUIForConnectionState(connected: Boolean) {
+        if (!connected) {
+            // 不重置计时器，让状态保存
+            heartRateChart.visibility = View.INVISIBLE
+        } else {
+            // 已连接，检查是否需要恢复传输
+            if (bluetoothViewModel.isTransferring.value == true) {
+                heartRateChart.visibility = View.VISIBLE
+                ecgDisplayManager.startUpdating()
+            }
+        }
+    }
+    
+    // 更新采集状态的UI
+    private fun updateUIForCollectionState(isCollecting: Boolean) {
+        if (isCollecting) {
+            // 如果正在采集，显示心率图表
+            heartRateChart.visibility = View.VISIBLE
+            if (bluetoothViewModel.isConnected.value == true) {
+                ecgDisplayManager.startUpdating()
+            }
+        }
+    }
+    
+    // 更新传输状态的UI
+    private fun updateUIForTransferState(isTransferring: Boolean) {
+        Log.d(TAG, "更新传输状态UI: isTransferring=$isTransferring, isConnected=${bluetoothViewModel.isConnected.value}")
+        if (isTransferring && bluetoothViewModel.isConnected.value == true) {
+            // 如果正在传输且已连接，显示心率图表并开始更新
+            heartRateChart.visibility = View.VISIBLE
+            ecgDisplayManager.startUpdating()
+            
+            // 确保界面上显示正在传输的状态
+            mainHandler.post {
+                Toast.makeText(this, "正在接收数据", Toast.LENGTH_SHORT).show()
+            }
+        } else if (!isTransferring) {
+            // 如果不在传输，停止更新
+            ecgDisplayManager.stopUpdating()
+            ecgDisplayManager.clearData()
+            heartRateChartManager.clearData()
+            heartRateChart.visibility = View.INVISIBLE
+        }
+    }
+    
+    // 更新计时器
+    private fun updateChronometer(startTime: Long) {
+        if (startTime > 0) {
+            // 设置计时器基准时间并启动
+            chronometer.base = startTime
+            chronometer.start()
+        } else {
+            // 重置计时器
+            chronometer.stop()
+            chronometer.base = SystemClock.elapsedRealtime()
+        }
+    }
 
     private fun initView() {
         // 找到UI组件
@@ -257,6 +346,12 @@ class BluetoothDataActivity : AppCompatActivity() {
         stopTransferButton = findViewById(R.id.stopTransferButton)
         bluetoothButton = findViewById(R.id.bleButton)
         backButton = findViewById(R.id.backButton)
+        
+        // 初始化连接设备信息UI组件
+        connectedDeviceLayout = findViewById(R.id.connected_device_layout)
+        connectedDeviceInfo = findViewById(R.id.connected_device_info)
+        disconnectButton = findViewById(R.id.disconnect_button)
+        deviceSignalStrength = findViewById(R.id.device_signal_strength)
 
         // 添加返回主页面按钮的点击事件
         findViewById<MaterialButton>(R.id.returnHomeButton).setOnClickListener {
@@ -360,8 +455,7 @@ class BluetoothDataActivity : AppCompatActivity() {
 
         startCollectButton.setOnClickListener {
             bluetoothViewModel.startCollecting()
-            chronometer.base = SystemClock.elapsedRealtime()
-            chronometer.start()
+            // chronometer的设置由ViewModel的观察者处理，避免重复设置
             heartRateChart.visibility = View.VISIBLE
             ecgDisplayManager.startUpdating()
         }
@@ -369,10 +463,16 @@ class BluetoothDataActivity : AppCompatActivity() {
         stopCollectButton.setOnClickListener {
             bluetoothViewModel.stopCollecting()
             chronometer.stop()
+            // 明确重置计时器基准时间
+            chronometer.base = SystemClock.elapsedRealtime()
             ecgDisplayManager.stopUpdating()
             ecgDisplayManager.clearData()
             heartRateChartManager.clearData()
             heartRateChart.visibility = View.INVISIBLE
+            
+            // 清除存储的设备状态信息
+            bleClient.clearSavedDeviceState()
+            Toast.makeText(this, "已结束采集并清除状态", Toast.LENGTH_SHORT).show()
         }
 
         startTransferButton.setOnClickListener {
@@ -387,6 +487,9 @@ class BluetoothDataActivity : AppCompatActivity() {
             ecgDisplayManager.clearData()
             heartRateChartManager.clearData()
             heartRateChart.visibility = View.INVISIBLE
+            // 强制清除ECG视图并重绘
+            ecgView.clearData() // 调用清除数据方法
+            ecgView.invalidate() // 强制重新绘制视图
         }
 
         // 设置全屏按钮点击事件
@@ -446,6 +549,28 @@ class BluetoothDataActivity : AppCompatActivity() {
                 // 不做任何操作
             }
         }
+        
+        // 设置断开连接按钮的点击事件
+        disconnectButton.setOnClickListener {
+            // 断开连接前确认
+            val alertDialog = androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("断开连接")
+                .setMessage("确定要断开当前设备的连接吗？这将清除已保存的设备信息。")
+                .setPositiveButton("确定") { dialog, _ ->
+                    // 断开连接前清除保存的设备状态
+                    bleClient.clearSavedDeviceState()
+                    // 断开连接
+                    bluetoothViewModel.disconnect()
+                    Toast.makeText(this, "已断开连接并清除设备信息", Toast.LENGTH_SHORT).show()
+                    dialog.dismiss()
+                }
+                .setNegativeButton("取消") { dialog, _ ->
+                    dialog.dismiss()
+                }
+                .create()
+            
+            alertDialog.show()
+        }
     }
 
     // ECG视图缩放方法
@@ -474,9 +599,61 @@ class BluetoothDataActivity : AppCompatActivity() {
         super.onResume()
         permissionManager.checkAndRequestBluetoothPermissions { granted ->
             if (granted) {
-                // 可以初始化蓝牙操作
+                // 如果未连接但有保存的设备，尝试重新连接
+                if (bluetoothViewModel.isConnected.value != true) {
+                    // 自动恢复连接（在ViewModel初始化时已经尝试）
+                    Log.d(TAG, "尝试恢复之前的连接")
+                    // 这里可以触发一次额外的重连尝试
+                    if (bleClient.hasSavedDevice()) {
+                        bleClient.restoreSavedConnection()
+                        
+                        // 在连接恢复后，设置一个延迟检查，确保传输状态被恢复
+                        mainHandler.postDelayed({
+                            if (bluetoothViewModel.isConnected.value == true && 
+                                bleClient.shouldRestoreTransfer() && 
+                                !bluetoothViewModel.isTransferring.value!!) {
+                                Log.d(TAG, "检测到应该恢复传输但尚未恢复，强制恢复")
+                                bleClient.forceRestoreTransferState()
+                                // 强制更新UI状态
+                                updateUIForTransferState(true)
+                            }
+                        }, 3000) // 给连接和服务发现一些时间
+                    }
+                }
+                // 如果已经连接成功，检查是否需要恢复传输状态
+                else {
+                    if (bluetoothViewModel.isTransferring.value == true) {
+                        // 确保传输已启动
+                        heartRateChart.visibility = View.VISIBLE
+                        ecgDisplayManager.startUpdating()
+                        Log.d(TAG, "恢复传输状态")
+                    } else if (bleClient.shouldRestoreTransfer()) {
+                        // 如果ViewModel状态不一致，强制恢复
+                        Log.d(TAG, "状态不一致，强制恢复传输")
+                        bleClient.forceRestoreTransferState()
+                        bluetoothViewModel.startTransferring() // 更新ViewModel状态
+                        heartRateChart.visibility = View.VISIBLE
+                        ecgDisplayManager.startUpdating()
+                    }
+                    
+                    // 如果正在采集，确保计时器正确显示
+                    if (bluetoothViewModel.isCollecting.value == true) {
+                        val startTime = bluetoothViewModel.collectionStartTime.value ?: 0
+                        if (startTime > 0) {
+                            chronometer.base = startTime
+                            chronometer.start()
+                            Log.d(TAG, "恢复计时器状态")
+                        }
+                    }
+                }
             }
         }
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        // 不断开连接，保持状态
+        Log.d(TAG, "Activity暂停，保持连接状态")
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -489,6 +666,7 @@ class BluetoothDataActivity : AppCompatActivity() {
         super.onDestroy()
         // 清理资源
         ecgDisplayManager.onDestroy()
+        // 如果需要保持连接，则使用disconnectAndSaveState
         bluetoothViewModel.clearData()
     }
 
@@ -496,10 +674,13 @@ class BluetoothDataActivity : AppCompatActivity() {
     override fun onBackPressed() {
         // 如果正在扫描，先停止扫描
         bluetoothViewModel.stopScan()
+        
+        // 不断开连接，只保存状态
         // 如果已连接设备，先断开连接
-        if (bluetoothViewModel.isConnected.value == true) {
-            bluetoothViewModel.disconnect()
-        }
+        // if (bluetoothViewModel.isConnected.value == true) {
+        //     bluetoothViewModel.disconnect()
+        // }
+        
         // 返回主页面
         val intent = Intent(this, MainActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
@@ -588,6 +769,37 @@ class BluetoothDataActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "计算HRV指标出错: ${e.message}")
             }
+        }
+    }
+
+    // 更新已连接设备的信息
+    private fun updateConnectedDeviceInfo() {
+        val connectedDevice = bluetoothViewModel.getConnectedDevice()
+        connectedDevice?.let { device ->
+            // 从SharedPreferences获取设备名称(SNCode)，避免权限问题
+            val sharedPref = getSharedPreferences("BLE_PREFS", MODE_PRIVATE)
+            val deviceName = sharedPref.getString("SN_CODE", null) ?: "未命名设备"
+            val deviceAddress = device.address
+            connectedDeviceInfo.text = "$deviceName ($deviceAddress)"
+            
+            // 获取并显示信号强度
+            val rssi = bluetoothViewModel.getDeviceRssi(device)
+            if (rssi != 0) {
+                val signalQuality = when {
+                    rssi > -60 -> "优"
+                    rssi > -70 -> "良"
+                    rssi > -80 -> "中"
+                    else -> "弱"
+                }
+                deviceSignalStrength.text = "$signalQuality ($rssi dBm)"
+            } else {
+                deviceSignalStrength.text = "未知"
+            }
+            
+            connectedDeviceLayout.visibility = View.VISIBLE
+        } ?: run {
+            // 没有连接设备则隐藏
+            connectedDeviceLayout.visibility = View.GONE
         }
     }
 }

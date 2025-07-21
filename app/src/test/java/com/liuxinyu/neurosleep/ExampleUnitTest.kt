@@ -40,6 +40,54 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun testTimeEncoding() {
+        // 模拟2025年的时间
+        val testTime = com.liuxinyu.neurosleep.util.FormattedTime(2025, 1, 16, 14, 30, 45)
+        println("Test time: $testTime")
+
+        // 测试年份编码问题
+        val yearMod100 = testTime.year % 100  // 2025 % 100 = 25
+        val yearByte = yearMod100.toByte()    // 25 as byte = 25
+        println("Year: ${testTime.year}, Year % 100: $yearMod100, Year as byte: $yearByte")
+
+        // 测试其他字段
+        println("Month: ${testTime.month}, as byte: ${testTime.month.toByte()}")
+        println("Day: ${testTime.day}, as byte: ${testTime.day.toByte()}")
+        println("Hour: ${testTime.hour}, as byte: ${testTime.hour.toByte()}")
+        println("Minute: ${testTime.minute}, as byte: ${testTime.minute.toByte()}")
+        println("Second: ${testTime.second}, as byte: ${testTime.second.toByte()}")
+
+        // 测试完整的命令编码
+        val command = com.liuxinyu.neurosleep.core.ble.ByteUtil.packCollectCommand(true, testTime)
+        println("Command bytes: ${command.joinToString(", ") { "0x%02X".format(it.toInt() and 0xFF) }}")
+
+        // 测试BCD编码函数
+        fun decimalToBcd(decimal: Int): Byte {
+            val tens = (decimal / 10) and 0x0F
+            val ones = decimal % 10 and 0x0F
+            return ((tens shl 4) or ones).toByte()
+        }
+
+        fun bcdToDecimal(bcdValue: Byte): Int {
+            val value = bcdValue.toInt() and 0xFF
+            val tens = (value shr 4) and 0x0F
+            val ones = value and 0x0F
+            return tens * 10 + ones
+        }
+
+        // 验证时间部分（现在使用BCD编码）
+        if (command.size >= 9) {
+            println("Time bytes in command (BCD format):")
+            println("  Year BCD: 0x${String.format("%02X", command[3].toInt() and 0xFF)} -> ${bcdToDecimal(command[3])}")
+            println("  Month BCD: 0x${String.format("%02X", command[4].toInt() and 0xFF)} -> ${bcdToDecimal(command[4])}")
+            println("  Day BCD: 0x${String.format("%02X", command[5].toInt() and 0xFF)} -> ${bcdToDecimal(command[5])}")
+            println("  Hour BCD: 0x${String.format("%02X", command[6].toInt() and 0xFF)} -> ${bcdToDecimal(command[6])}")
+            println("  Minute BCD: 0x${String.format("%02X", command[7].toInt() and 0xFF)} -> ${bcdToDecimal(command[7])}")
+            println("  Second BCD: 0x${String.format("%02X", command[8].toInt() and 0xFF)} -> ${bcdToDecimal(command[8])}")
+        }
+    }
+
+    @Test
     fun testEcgReceived() {
         println(String.format(Locale.CHINA,"%.2f",1.22343021))
         val data = listOf(

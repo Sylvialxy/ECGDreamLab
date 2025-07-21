@@ -25,8 +25,8 @@ class HeartRateChartManager(private val liveChart: LiveChart) {
 
     private val chartStyle = LiveChartStyle().apply {
         mainColor = Color.RED
-        pathStrokeWidth = 8f
-        secondPathStrokeWidth = 4f
+        pathStrokeWidth = 3f // 线条变细
+        secondPathStrokeWidth = 2f // 线条变细
         textHeight = 40f
         textColor = Color.GRAY
         overlayLineColor = Color.BLUE

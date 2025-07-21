@@ -7,4 +7,12 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">1.12.225.218</domain>
     </domain-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.105.0.33</domain>
+    </domain-config>
+    
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.105.0.34</domain>
+    </domain-config>
 </network-security-config>

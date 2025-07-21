@@ -4,31 +4,27 @@ import com.liuxinyu.neurosleep.feature.home.experiment.Experimentvo
 import com.liuxinyu.neurosleep.core.auth.LoginResponse
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import retrofit2.Response
-import retrofit2.http.Field
-import retrofit2.http.FormUrlEncoded
+import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Query
+import retrofit2.http.Url
 
 interface UserApiService {
-    @POST("/user/register")
-    @FormUrlEncoded
+    @POST("/api/user/register")
     suspend fun register(
-        @Field("phone") phone: String,
-        @Field("password") password: String,
-        @Field("id") id: Int = 1  // 默认值为1
+        @Body request: RegisterRequest
     ): ApiResponse<Unit>
 
-    @FormUrlEncoded
-    @POST("user/login")
+    @POST("/api/user/login")
     suspend fun login(
-        @Field("phone") phone: String,
-        @Field("password") password: String,
-        @Field("id") id: Int = 1  // 默认值为1
+        @Body request: LoginRequest
     ): ApiResponse<LoginResponse>
 
     @GET("/user/experiments")
@@ -36,17 +32,33 @@ interface UserApiService {
         @Header("Authorization") token: String
     ): ApiResponse<List<Experimentvo>>
 
-    @Multipart
-    @POST("/files/chunk")  // 与后端 @PostMapping("/chunk") 匹配
-    suspend fun uploadChunk(
-        @Part file: MultipartBody.Part,
-        @Part("experimentId") experimentId: RequestBody?,  // 允许为空
-        @Part("chunkIndex") chunkIndex: RequestBody,
-        @Part("totalChunks") totalChunks: RequestBody,
-        @Part("SNCode") snCode: RequestBody,  // 参数名与后端完全一致
-        @Part labelDTO: MultipartBody.Part?,   // 以 Part 形式传递 JSON
-        @Header("Authorization") token: String // 统一认证
-    ): ApiResponse<String>  // 统一业务响应
+    // 获取预签名上传URL
+    @POST("/api/files/presigned-upload")
+    suspend fun getPresignedUploadUrls(
+        @Body request: PresignedUploadRequest,
+        @Header("Authorization") token: String
+    ): ApiResponse<PresignedUploadResponse>
+
+    // 使用预签名URL上传分片
+    @PUT
+    suspend fun uploadChunkToPresignedUrl(
+        @Url presignedUrl: String,
+        @Body chunkData: RequestBody
+    ): Response<ResponseBody>
+
+    // 完成多部分上传
+    @POST("/api/files/complete-multipart-upload")
+    suspend fun completeMultipartUpload(
+        @Body request: CompleteMultipartUploadRequest,
+        @Header("Authorization") token: String
+    ): ApiResponse<String>
+    
+    // 文件上传回调接口
+    @POST("/api/files/presigned-upload-recall")
+    suspend fun fileUploadRecall(
+        @Body request: FileUploadRecallRequest,
+        @Header("Authorization") token: String
+    ): ApiResponse<Unit>
 
     @POST("experiment/join")
     suspend fun joinExperiment(
@@ -57,7 +69,84 @@ interface UserApiService {
 
 // 通用响应模型
 data class ApiResponse<T>(
-    val code: Int,
+    val code: String,
     val msg: String?,
     val data: T?
+)
+
+// 请求数据模型
+data class LoginRequest(
+    val phone: String,
+    val password: String
+)
+
+data class RegisterRequest(
+    val phone: String,
+    val password: String
+)
+
+// 预签名上传请求新格式
+data class PresignedUploadRequest(
+    val files: List<FileUploadRequest>
+)
+
+data class FileUploadRequest(
+    val originalFilename: String,
+    val contentType: String = "application/bin", // 默认值
+    val partCount: Int,
+    val SNCode: String,
+    // 保留额外字段以备用
+    val experimentId: Int? = null,
+    val labelDTO: String? = null // JSON字符串形式的标签数据
+)
+
+// 旧版请求类改名保留兼容
+@Deprecated("使用新版PresignedUploadRequest和FileUploadRequest类")
+data class OldPresignedUploadRequest(
+    val originalFilename: String,
+    val fileSize: Long,
+    val experimentId: Int?,
+    val snCode: String,
+    val labelDTO: String? = null // JSON字符串形式的标签数据
+)
+
+// 预签名上传响应
+data class PresignedUploadResponse(
+    val filesUploadMeta: List<FileUploadMeta>
+)
+
+data class FileUploadMeta(
+    val originalFilename: String,
+    val objectName: String,
+    val presignedUrl: String?,
+    val expiryTime: Long,
+    val uploadId: String,
+    val chunkPresignedUrls: List<ChunkPresignedUrl>
+)
+
+data class ChunkPresignedUrl(
+    val partNumber: Int,
+    val presignedUrl: String
+)
+
+// 完成多部分上传请求
+data class CompleteMultipartUploadRequest(
+    val objectName: String,
+    val uploadId: String,
+    val parts: List<UploadPart>
+)
+
+data class UploadPart(
+    val partNumber: Int,
+    val etag: String
+)
+
+// 文件上传回调请求
+data class FileUploadRecallRequest(
+    val recallList: List<FileUploadRecallItem>
+)
+
+data class FileUploadRecallItem(
+    val objectName: String,
+    val contentType: String = ""
 )

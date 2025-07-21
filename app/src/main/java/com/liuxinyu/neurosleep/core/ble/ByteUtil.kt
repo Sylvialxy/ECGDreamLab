@@ -1,5 +1,6 @@
 package com.liuxinyu.neurosleep.core.ble
 
+import android.util.Log
 import com.liuxinyu.neurosleep.data.model.EcgData
 import com.liuxinyu.neurosleep.util.FormattedTime
 import java.nio.ByteBuffer
@@ -24,15 +25,16 @@ object ByteUtil {
         buffer.add(if (flag) 0x01.toByte() else 0x00.toByte())
 
         if (flag){
-            buffer.add(0x01.toByte())
-            // 如果有开始时间，则添加
+            // 如果有开始时间，则添加（使用直接十六进制编码，非BCD）
+            // 根据协议示例：0x1801020c0000 表示 24年1月2号12点0分0秒
+            // 这里只使用年份后两位，设备固件会自动处理年份前缀
             startTime?.let {
-                buffer.add((it.year % 100).toByte()) // 确认一下是不是只取年份的后两位
-                buffer.add(it.month.toByte())
-                buffer.add(it.day.toByte())
-                buffer.add(it.hour.toByte())
-                buffer.add(it.minute.toByte())
-                buffer.add(it.second.toByte())
+                buffer.add((it.year % 100).toByte()) // 年份后两位（如2025年 -> 25）
+                buffer.add(it.month.toByte())         // 月份
+                buffer.add(it.day.toByte())           // 日期
+                buffer.add(it.hour.toByte())          // 小时
+                buffer.add(it.minute.toByte())        // 分钟
+                buffer.add(it.second.toByte())        // 秒
             }
         }
         else
