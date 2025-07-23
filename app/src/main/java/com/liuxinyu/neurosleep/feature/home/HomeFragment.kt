@@ -32,12 +32,15 @@ import com.liuxinyu.neurosleep.core.main.FlashPageActivity
 import com.liuxinyu.neurosleep.data.database.AppDatabase
 import com.liuxinyu.neurosleep.data.model.EcgLabel
 import com.liuxinyu.neurosleep.data.model.EcgLabelDTO
+import com.liuxinyu.neurosleep.data.model.StatusLabelRequest
+import com.liuxinyu.neurosleep.data.model.StatusLabelConverter
 import com.liuxinyu.neurosleep.data.network.RetrofitClient
 import com.liuxinyu.neurosleep.data.network.UserApiService
 import com.liuxinyu.neurosleep.data.network.PresignedUploadRequest
 import com.liuxinyu.neurosleep.data.network.CompleteMultipartUploadRequest
 import com.liuxinyu.neurosleep.data.network.UploadPart
 import com.liuxinyu.neurosleep.data.network.FileUploadRequest
+import com.liuxinyu.neurosleep.data.network.ApiResponse
 import com.liuxinyu.neurosleep.data.repository.EcgLabelRepository
 import com.liuxinyu.neurosleep.databinding.FragmentHomeBinding
 import com.liuxinyu.neurosleep.feature.home.experiment.JoinExperimentFragment
@@ -45,6 +48,8 @@ import com.liuxinyu.neurosleep.feature.home.label.MakeLabelFragment
 import com.liuxinyu.neurosleep.feature.home.viewmodel.EcgLabelViewModel
 import com.liuxinyu.neurosleep.feature.home.viewmodel.EcgLabelViewModelFactory
 import com.liuxinyu.neurosleep.util.user.AuthManager
+import com.liuxinyu.neurosleep.util.config.UploadConfig
+import com.liuxinyu.neurosleep.util.file.EcgBinFileReader
 import com.yabu.livechart.model.DataPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -265,7 +270,7 @@ class HomeFragment : Fragment() {
         val fileSize = contentResolver.openFileDescriptor(uri, "r")?.statSize ?: return
         val fileName = getFileName(uri)
 
-        val bufferSize = 5 * 1024 * 1024 // 每块 5MB
+        val bufferSize = UploadConfig.CHUNK_SIZE // 每块 5MB
         val totalChunks = ((fileSize + bufferSize - 1) / bufferSize).toInt()
 
         // 从SharedPreferences获取真实的SNCode
@@ -356,9 +361,111 @@ class HomeFragment : Fragment() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // 第一步：获取预签名上传URL
-                Log.d(TAG, "Step 1: Getting presigned upload URLs")
-                
+                // 调试：显示文件头信息
+                Log.d(TAG, "=== File Upload Debug Info ===")
+                EcgBinFileReader.debugFileHeader(requireContext(), uri)
+
+                // 确保token格式正确
+                val formattedToken = if (!token.startsWith("Bearer ")) "Bearer $token" else token
+
+                // 第一步：上传状态标签（可选）
+                if (UploadConfig.ENABLE_STATUS_LABEL_UPLOAD) {
+                    Log.d(TAG, "Step 1: Uploading status labels")
+
+                    // 从ECG.BIN文件头读取采集开始时间
+                    val collectionStartTime = EcgBinFileReader.readCollectionStartTime(requireContext(), uri)
+                    if (collectionStartTime == null) {
+                        Log.e(TAG, "Failed to read collection start time from file header, using fallback time")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "无法读取文件头时间信息，使用默认时间", Toast.LENGTH_SHORT).show()
+                        }
+                        // 使用当前时间作为后备方案
+                        val fallbackTime = LocalDateTime.now().minusHours(1)
+                        Log.d(TAG, "Using fallback collection start time: $fallbackTime")
+                    } else {
+                        Log.d(TAG, "Successfully read collection start time from file: $collectionStartTime")
+                    }
+                    val finalCollectionStartTime = collectionStartTime ?: LocalDateTime.now().minusHours(1)
+
+                    // 转换标签格式并上传
+                    val statusLabelRequest = StatusLabelConverter.convertToStatusLabelRequest(
+                        deviceSn = snCode,
+                        collectionStartTime = finalCollectionStartTime,
+                        labels = currentLabels
+                    )
+
+                    // 添加详细的请求日志
+                    Log.d(TAG, "Status label request: deviceSn=$snCode, collectionStartTime=$finalCollectionStartTime")
+                    Log.d(TAG, "Status labels count: ${statusLabelRequest.statusLabels.size}")
+                    statusLabelRequest.statusLabels.forEachIndexed { index, label ->
+                        Log.d(TAG, "Label $index: status=${label.status}, start=${label.eventStartTime}, end=${label.eventEndTime}")
+                    }
+
+                    // 调用状态标签上传接口
+                    try {
+                        val statusLabelResponse = retrofit.uploadStatusLabel(statusLabelRequest, formattedToken)
+                        if (statusLabelResponse.code != "00000") {
+                            val errorMsg = "状态标签上传失败: ${statusLabelResponse.msg}"
+                            Log.e(TAG, errorMsg)
+                            if (UploadConfig.CONTINUE_ON_STATUS_LABEL_FAILURE) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(requireContext(), "$errorMsg，继续文件上传", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(requireContext(), errorMsg, Toast.LENGTH_LONG).show()
+                                }
+                                return@launch
+                            }
+                        } else {
+                            Log.d(TAG, "Status labels uploaded successfully")
+                        }
+                    } catch (e: retrofit2.HttpException) {
+                        val errorMsg = "状态标签上传HTTP错误: ${e.code()}"
+                        Log.e(TAG, errorMsg, e)
+
+                        if (e.code() == 500) {
+                            Log.w(TAG, "Status label API not implemented on server, skipping status label upload")
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "状态标签接口暂未实现，跳过标签上传", Toast.LENGTH_SHORT).show()
+                            }
+                        } else if (UploadConfig.CONTINUE_ON_STATUS_LABEL_FAILURE) {
+                            withContext(Dispatchers.Main) {
+                                val msg = if (UploadConfig.SHOW_DETAILED_STATUS_LABEL_ERRORS) {
+                                    "$errorMsg，继续文件上传"
+                                } else {
+                                    "状态标签上传失败，继续文件上传"
+                                }
+                                Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), errorMsg, Toast.LENGTH_LONG).show()
+                            }
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        val errorMsg = "状态标签上传异常: ${e.message}"
+                        Log.e(TAG, errorMsg, e)
+
+                        if (UploadConfig.CONTINUE_ON_STATUS_LABEL_FAILURE) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "$errorMsg，继续文件上传", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), errorMsg, Toast.LENGTH_LONG).show()
+                            }
+                            return@launch
+                        }
+                    }
+                } else {
+                    Log.d(TAG, "Status label upload disabled, skipping step 1")
+                }
+
+                // 第二步：获取预签名上传URL
+                Log.d(TAG, "Step 2: Getting presigned upload URLs")
+
                 // 使用新的API请求格式
                 val fileRequest = FileUploadRequest(
                     originalFilename = fileName ?: "unknown.bin",
@@ -373,8 +480,6 @@ class HomeFragment : Fragment() {
                     files = listOf(fileRequest)
                 )
 
-                // 确保token格式正确
-                val formattedToken = if (!token.startsWith("Bearer ")) "Bearer $token" else token
                 val presignedResponse = retrofit.getPresignedUploadUrls(presignedRequest, formattedToken)
                 if (presignedResponse.code != "00000" || presignedResponse.data == null) {
                     withContext(Dispatchers.Main) {
@@ -393,8 +498,8 @@ class HomeFragment : Fragment() {
 
                 Log.d(TAG, "Got upload meta: uploadId=${uploadMeta.uploadId}, chunks=${uploadMeta.chunkPresignedUrls.size}")
 
-                // 第二步：使用预签名URL上传各个分片
-                Log.d(TAG, "Step 2: Uploading chunks using presigned URLs")
+                // 第三步：使用预签名URL上传各个分片
+                Log.d(TAG, "Step 3: Uploading chunks using presigned URLs")
                 val uploadedParts = mutableListOf<UploadPart>()
                 var uploadSuccess = true
 
@@ -451,7 +556,7 @@ class HomeFragment : Fragment() {
                     }
                 }
 
-                // 第三步：完成多部分上传
+                // 第四步：完成多部分上传
                 if (uploadSuccess && uploadedParts.isNotEmpty()) {
                     completeMultipartUpload(uploadMeta.objectName, uploadMeta.uploadId, uploadedParts, formattedToken, retrofit)
                 }

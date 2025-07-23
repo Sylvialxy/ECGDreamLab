@@ -2,6 +2,7 @@ package com.liuxinyu.neurosleep.data.network
 
 import com.liuxinyu.neurosleep.feature.home.experiment.Experimentvo
 import com.liuxinyu.neurosleep.core.auth.LoginResponse
+import com.liuxinyu.neurosleep.data.model.StatusLabelRequest
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -57,6 +58,13 @@ interface UserApiService {
     @POST("/api/files/presigned-upload-recall")
     suspend fun fileUploadRecall(
         @Body request: FileUploadRecallRequest,
+        @Header("Authorization") token: String
+    ): ApiResponse<Unit>
+
+    // 上传状态标签接口
+    @POST("/api/files/status-label")
+    suspend fun uploadStatusLabel(
+        @Body request: StatusLabelRequest,
         @Header("Authorization") token: String
     ): ApiResponse<Unit>
 
