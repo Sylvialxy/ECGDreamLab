@@ -155,16 +155,31 @@ class HomeFragment : Fragment() {
 
         view.findViewById<Button>(R.id.btn_bluetooth_data).setOnClickListener {
             Log.d(TAG, "Bluetooth button clicked") // 确认点击事件触发
-            
+
             // 检查用户是否已登录
             val phone = AuthManager.getPhone(requireContext())
             if (phone == null) {
                 Toast.makeText(requireContext(), "请先登录", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            
+
             // 启动新的Activity
             val intent = Intent(requireContext(), BluetoothDataActivity::class.java)
+            startActivity(intent)
+        }
+
+        view.findViewById<Button>(R.id.btn_stimulus_equipment).setOnClickListener {
+            Log.d(TAG, "Stimulus equipment button clicked")
+
+            // 检查用户是否已登录
+            val phone = AuthManager.getPhone(requireContext())
+            if (phone == null) {
+                Toast.makeText(requireContext(), "请先登录", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            // 启动刺激设备Activity
+            val intent = Intent(requireContext(), com.liuxinyu.neurosleep.feature.stimulus.StimulusActivity::class.java)
             startActivity(intent)
         }
 

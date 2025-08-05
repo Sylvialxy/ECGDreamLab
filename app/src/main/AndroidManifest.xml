@@ -75,6 +75,16 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="portrait" />
         <activity
+            android:name=".feature.stimulus.StimulusActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="portrait"
+            android:parentActivityName="com.liuxinyu.neurosleep.MainActivity">
+            <!-- 为 API 级别低于 16 的设备提供父活动 -->
+            <meta-data
+                android:name="android.support.PARENT_ACTIVITY"
+                android:value="com.liuxinyu.neurosleep.MainActivity" />
+        </activity>
+        <activity
             android:name=".feature.train.player.TrainingPlayerActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="portrait"
