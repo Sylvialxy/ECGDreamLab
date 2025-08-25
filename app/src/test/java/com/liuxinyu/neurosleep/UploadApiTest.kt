@@ -10,20 +10,43 @@ import org.junit.Assert.*
 class UploadApiTest {
 
     @Test
-    fun testPresignedUploadRequest() {
-        val request = PresignedUploadRequest(
+    fun testFileUploadRequest() {
+        val fileRequest = FileUploadRequest(
             originalFilename = "test.bin",
-            fileSize = 1024L,
+            contentType = "application/bin",
+            partCount = 5,
+            SNCode = "TEST123",
             experimentId = 1,
-            snCode = "TEST123",
             labelDTO = "{\"labels\":[]}"
         )
 
-        assertEquals("test.bin", request.originalFilename)
-        assertEquals(1024L, request.fileSize)
-        assertEquals(1, request.experimentId)
-        assertEquals("TEST123", request.snCode)
-        assertEquals("{\"labels\":[]}", request.labelDTO)
+        assertEquals("test.bin", fileRequest.originalFilename)
+        assertEquals("application/bin", fileRequest.contentType)
+        assertEquals(5, fileRequest.partCount)
+        assertEquals("TEST123", fileRequest.SNCode)
+        assertEquals(1, fileRequest.experimentId)
+        assertEquals("{\"labels\":[]}", fileRequest.labelDTO)
+    }
+
+    @Test
+    fun testPresignedUploadRequest() {
+        val fileRequest = FileUploadRequest(
+            originalFilename = "test.bin",
+            contentType = "application/bin",
+            partCount = 5,
+            SNCode = "TEST123",
+            experimentId = 1,
+            labelDTO = "{\"labels\":[]}"
+        )
+        
+        val request = PresignedUploadRequest(
+            files = listOf(fileRequest)
+        )
+
+        assertEquals(1, request.files.size)
+        assertEquals("test.bin", request.files[0].originalFilename)
+        assertEquals("TEST123", request.files[0].SNCode)
+        assertEquals(1, request.files[0].experimentId)
     }
 
     @Test
