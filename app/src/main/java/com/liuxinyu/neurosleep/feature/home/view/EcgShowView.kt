@@ -242,26 +242,48 @@ class EcgShowView(context: Context, attrs: AttributeSet) : View(context, attrs) 
         paint!!.reset()
         path!!.reset()
         paint!!.style = Paint.Style.STROKE
-        paint!!.color = Color.parseColor("#77FF0000")
-        paint!!.strokeWidth = mGridLinestrokeWidth
+        paint!!.color = Color.parseColor("#FF0000") // 使用更鲜艳的红色，更像医院心电图
+        paint!!.strokeWidth = mHeartLinestrokeWidth * 0.8f // 稍微细一点的线条，更精细
         paint!!.isAntiAlias = true
-        path!!.moveTo(0f, mHeight / 2)
+        
+        // 如果数据点很多，使用滚动显示最新的数据
+        val startIndex = if (data!!.size > mWidth.toInt() * 2) {
+            data!!.size - (mWidth.toInt() * 2)
+        } else {
+            0
+        }
+        
+        var isFirstPoint = true
         var nowX: Float
         var nowY: Float
-        for (i in data!!.indices) {
-            nowX = i * intervalRowHeart
+        
+        for (i in startIndex until data!!.size) {
+            nowX = (i - startIndex) * intervalRowHeart
+            
+            // 如果X坐标超出视图宽度，停止绘制
+            if (nowX > mWidth) break
+            
             var dataValue = data!![i]
+            
+            // 限制数据值范围，但允许更大的动态范围以显示更明显的R峰
             if (dataValue > 0) {
-                if (dataValue > MAX_VALUE * 0.8f) {
-                    dataValue = MAX_VALUE * 0.8f
+                if (dataValue > MAX_VALUE) {
+                    dataValue = MAX_VALUE
                 }
             } else {
-                if (dataValue < -MAX_VALUE * 0.8f) {
-                    dataValue = -(MAX_VALUE * 0.8f)
+                if (dataValue < -MAX_VALUE) {
+                    dataValue = -MAX_VALUE
                 }
             }
+            
             nowY = mHeight / 2 - dataValue * intervalColumnHeart
-            path!!.lineTo(nowX, nowY)
+            
+            if (isFirstPoint) {
+                path!!.moveTo(nowX, nowY)
+                isFirstPoint = false
+            } else {
+                path!!.lineTo(nowX, nowY)
+            }
         }
 
         canvas.drawPath(path!!, paint!!)
@@ -300,15 +322,20 @@ class EcgShowView(context: Context, attrs: AttributeSet) : View(context, attrs) 
             SHOW_MODEL_ALL -> {
                 dataLength = dataStrList!!.size
 
-                if (dataLength > mWidth) {
-                    dataLength = mWidth.toInt()
-                }
+                // 移除数据长度限制，允许显示更多数据点以获得更密集的心电图
+                // 如果数据点太多，通过调整intervalRowHeart来压缩显示
                 data = FloatArray(dataLength)
                 for (i in 0 until dataLength) {
                     data!![i] = java.lang.Float.parseFloat(dataStrList!![i])
                 }
                 intervalNumHeart = data!!.size
-                intervalRowHeart = mWidth / intervalNumHeart
+                
+                // 确保至少有足够的水平分辨率来显示密集的数据
+                intervalRowHeart = if (intervalNumHeart > 0) {
+                    maxOf(mWidth / intervalNumHeart, 1.0f) // 最小间隔为1像素
+                } else {
+                    1.0f
+                }
                 intervalColumnHeart = mHeight / (MAX_VALUE * 2)
             }
             SHOW_MODEL_DYNAMIC_SCROLL -> {

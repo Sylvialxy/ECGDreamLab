@@ -53,9 +53,9 @@ class EcgDisplayManager(
             EcgType.ECG3 -> dataQueue.add(ecg3)
         }
         
-        // 滑动窗口 只保留 10s 数据 (减少了从20s到10s以提高性能)
-        if (dataQueue.size > 2000) { // 10s * 200Hz = 2000个数据点
-            repeat(10) {
+        // 滑动窗口 保留 30s 数据 (增加从10s到30s以显示更多R峰)
+        if (dataQueue.size > 6000) { // 30s * 200Hz = 6000个数据点
+            repeat(20) { // 每次移除20个数据点，保持流畅滚动
                 dataQueue.poll()
             }
         }
@@ -66,10 +66,10 @@ class EcgDisplayManager(
         
         timer = Timer()
         
-        // 更新ECG波形的任务 - 提高更新频率，从2000ms改为500ms
+        // 更新ECG波形的任务 - 保持500ms更新频率
         updateTask = object : TimerTask() {
             override fun run() {
-                if (dataQueue.size < 200) // 只需要1秒数据就开始显示
+                if (dataQueue.size < 500) // 需要2.5秒数据才开始显示，确保有足够的波形
                     return
 
                 // 在后台线程处理数据
@@ -77,8 +77,9 @@ class EcgDisplayManager(
                     val dataSb = StringBuilder()
                     val filteredData = removeDCWithMovingAverage()
 
-                    // 减少处理的数据量，从300减少到200，以提高渲染速度
-                    for (i in filteredData.toList().take(200)) {
+                    // 增加显示的数据量，从200增加到1000，显示约5秒的数据（包含多个R峰）
+                    val displayDataCount = minOf(1000, filteredData.size)
+                    for (i in filteredData.toList().takeLast(displayDataCount)) {
                         dataSb.append(i.toString()).append(',')
                     }
                     
@@ -91,10 +92,10 @@ class EcgDisplayManager(
             }
         }
         
-        // 更新心率的任务 - 增加更新间隔，从5000ms改为8000ms，以降低更新频率
+        // 更新心率的任务 - 保持8000ms更新间隔
         heartRateTask = object : TimerTask() {
             override fun run() {
-                if (dataQueue.size < 3 * 200)
+                if (dataQueue.size < 5 * 200) // 需要至少5秒数据来准确计算心率
                     return
                     
                 // 在后台线程计算心率

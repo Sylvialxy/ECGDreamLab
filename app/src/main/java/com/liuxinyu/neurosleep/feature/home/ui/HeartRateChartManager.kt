@@ -19,11 +19,11 @@ class HeartRateChartManager(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val dataList = mutableListOf<DataPoint>()
     private val slidingWindow = LinkedList<DataPoint>()
-    private val slidingWindowSize = 40 // 增加窗口大小，使图表显示更多历史数据
+    private val slidingWindowSize = 30 // 显示30个心率数据点，约2-3分钟的趋势
     
     // 添加数据缓冲，用于控制更新频率
     private val dataBuffer = LinkedList<Float>()
-    private val bufferThreshold = 15 // 增加缓冲阈值从5到15，累积更多数据再更新
+    private val bufferThreshold = 8 // 减少缓冲阈值，让心率趋势更新更及时
     
     // 添加历史心率值列表，用于计算变化率和检测异常值
     private val heartRateHistory = LinkedList<Float>()
@@ -39,17 +39,17 @@ class HeartRateChartManager(
     
     private var chartType = "心率" // 默认图表类型
     
-    // 各指标的显示范围
+    // 各指标的初始显示范围 - 使用更合理的范围，让趋势图更美观
     private val rangeMap = mapOf(
-        "心率" to Pair(40f, 150f),
-        "meanHR" to Pair(40f, 150f),
-        "RMSSD" to Pair(0f, 100f),
-        "SDNN" to Pair(0f, 150f)
+        "心率" to Pair(50f, 100f), // 缩小心率范围，让趋势线更明显
+        "meanHR" to Pair(50f, 100f),
+        "RMSSD" to Pair(10f, 60f), // 更合理的RMSSD范围
+        "SDNN" to Pair(20f, 80f)   // 更合理的SDNN范围
     )
     
-    // 当前值范围
-    private var minValue = 40f
-    private var maxValue = 150f
+    // 当前值范围 - 初始化为更合理的心率范围
+    private var minValue = 50f
+    private var maxValue = 100f
     
     // 追踪实际数据的最小值和最大值，用于自动调整范围
     private var dataMinValue = Float.MAX_VALUE
@@ -58,7 +58,7 @@ class HeartRateChartManager(
     
     // 添加上次更新时间追踪
     private var lastUpdateTime = System.currentTimeMillis()
-    private val UPDATE_INTERVAL = 3000 // 增加更新间隔从2秒到3秒
+    private val UPDATE_INTERVAL = 2000 // 心率趋势图2秒更新一次，显示流畅的趋势变化
 
     init {
         setupChart()
@@ -96,6 +96,8 @@ class HeartRateChartManager(
             heartRateChart.setDataset(Dataset(dataList))
                 .setLiveChartStyle(getChartStyle())
                 .drawSmoothPath()
+                .drawYBounds() // 显示Y轴边界，让用户能看到数值范围
+                .drawHorizontalGuidelines(5) // 显示5条水平网格线，便于读取数值
                 .drawDataset()
                 
             // 设置Y轴界限
@@ -180,8 +182,8 @@ class HeartRateChartManager(
                     }
                 }
                 
-                // 应用额外的平滑处理 - 加权平均
-                smoothedValue = lastValue * 0.4f + smoothedValue * 0.6f
+                // 应用额外的平滑处理 - 心率趋势图需要更平滑的过渡
+                smoothedValue = lastValue * 0.3f + smoothedValue * 0.7f
             }
             
             // 清空缓冲区
@@ -200,14 +202,39 @@ class HeartRateChartManager(
             if (smoothedValue < dataMinValue) dataMinValue = smoothedValue
             if (smoothedValue > dataMaxValue) dataMaxValue = smoothedValue
             
-            // 如果启用了自动调整范围，并且数据超出当前范围，则调整范围
-            if (autoAdjustRange) {
-                // 给一些余量，避免数据点贴近边缘
-                if (dataMinValue < minValue + (maxValue - minValue) * 0.1f) {
-                    minValue = (dataMinValue - (maxValue - minValue) * 0.1f).coerceAtLeast(0f)
+            // 智能调整Y轴范围，让心率趋势图占据更多图表空间
+            if (autoAdjustRange && heartRateHistory.size >= 5) {
+                // 基于实际数据动态调整范围，让趋势线更明显
+                val dataRange = dataMaxValue - dataMinValue
+                val padding = kotlin.math.max(dataRange * 0.2f, 5f) // 至少5个单位的边距
+                
+                // 动态调整范围，但保持合理的最小范围
+                val newMinValue = (dataMinValue - padding).coerceAtLeast(
+                    when (chartType) {
+                        "心率", "meanHR" -> 30f
+                        "RMSSD" -> 0f
+                        "SDNN" -> 0f
+                        else -> 0f
+                    }
+                )
+                
+                val newMaxValue = dataMaxValue + padding
+                
+                // 确保范围不会太小，至少保持20个单位的范围
+                val minRange = when (chartType) {
+                    "心率", "meanHR" -> 20f
+                    "RMSSD" -> 15f
+                    "SDNN" -> 20f
+                    else -> 20f
                 }
-                if (dataMaxValue > maxValue - (maxValue - minValue) * 0.1f) {
-                    maxValue = dataMaxValue + (maxValue - minValue) * 0.1f
+                
+                if (newMaxValue - newMinValue < minRange) {
+                    val center = (newMaxValue + newMinValue) / 2f
+                    minValue = center - minRange / 2f
+                    maxValue = center + minRange / 2f
+                } else {
+                    minValue = newMinValue
+                    maxValue = newMaxValue
                 }
             }
             
@@ -267,6 +294,8 @@ class HeartRateChartManager(
             heartRateChart.setDataset(Dataset(tempDataList))
                 .setLiveChartStyle(getChartStyle())
                 .drawSmoothPath()
+                .drawYBounds() // 显示Y轴边界，让用户能看到数值范围
+                .drawHorizontalGuidelines(5) // 显示5条水平网格线，便于读取数值
                 .drawDataset()
                 
             // X轴范围不需要显式设置，由数据点数量决定
@@ -323,30 +352,47 @@ class HeartRateChartManager(
         currentScale = 1.0f
         applyZoom()
     }
+    
+    // 重置Y轴范围到合适的初始值
+    fun resetRange() {
+        val (min, max) = rangeMap[chartType] ?: Pair(50f, 100f)
+        minValue = min
+        maxValue = max
+        
+        // 重置数据范围追踪
+        dataMinValue = Float.MAX_VALUE
+        dataMaxValue = Float.MIN_VALUE
+        
+        // 更新图表显示
+        updateChartBounds()
+    }
 
     private fun getChartStyle(): LiveChartStyle {
         // 根据不同的图表类型设置不同的颜色
         val mainColor = when (chartType) {
-            "心率" -> Color.RED
-            "meanHR" -> Color.rgb(255, 165, 0) // 橙色
-            "RMSSD" -> Color.rgb(0, 128, 0) // 绿色
-            "SDNN" -> Color.rgb(0, 0, 255) // 蓝色
-            else -> Color.RED
+            "心率" -> Color.rgb(220, 20, 60) // 深红色，更专业的心率颜色
+            "meanHR" -> Color.rgb(255, 140, 0) // 深橙色
+            "RMSSD" -> Color.rgb(34, 139, 34) // 森林绿
+            "SDNN" -> Color.rgb(30, 144, 255) // 道奇蓝
+            else -> Color.rgb(220, 20, 60)
         }
         
         return LiveChartStyle().apply {
             this.mainColor = mainColor
-            // 将线条变细
-            pathStrokeWidth = 3f * currentScale
-            secondPathStrokeWidth = 2f * currentScale
-            textHeight = 40f * currentScale
-            textColor = Color.GRAY
-            overlayLineColor = Color.BLUE
-            overlayCircleDiameter = 32f * currentScale
-            overlayCircleColor = Color.GREEN
+            // 心率趋势图使用较粗的线条，更容易观察趋势
+            pathStrokeWidth = 4f * currentScale
+            secondPathStrokeWidth = 3f * currentScale
+            textHeight = 32f * currentScale
+            textColor = Color.rgb(80, 80, 80) // Y轴标签文字颜色
+            overlayLineColor = Color.rgb(0, 150, 255) // 蓝色覆盖线
+            overlayCircleDiameter = 28f * currentScale
+            overlayCircleColor = Color.rgb(0, 200, 0) // 绿色覆盖圆点
             
-            // 移除不支持的属性设置
-            // LiveChartStyle不支持自定义网格线
+            // Y轴边界和网格线样式
+            boundsLineColor = Color.rgb(120, 120, 120) // Y轴边界线颜色
+            guideLineColor = Color.rgb(200, 200, 200) // 水平网格线颜色，较浅
+            
+            // 心率趋势图的专业样式设置
         }
     }
 } 
