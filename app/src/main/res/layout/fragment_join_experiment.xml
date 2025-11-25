@@ -6,40 +6,35 @@
     android:padding="16dp"
     android:background="@color/white">
 
+    <!-- 已加入的实验列表标题 -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="加入实验"
+        android:text="已加入的实验"
         android:textSize="24sp"
         android:textStyle="bold"
         android:textColor="#2196F3"
         android:gravity="center"
         android:layout_marginTop="32dp"
-        android:layout_marginBottom="32dp"/>
+        android:layout_marginBottom="24dp"/>
 
-    <com.google.android.material.textfield.TextInputLayout
+    <!-- 实验列表 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/studyRecyclerView"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="24dp"
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
 
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/inviteCodeInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="请输入邀请码"
-            android:inputType="text"
-            android:maxLines="1"/>
-
-    </com.google.android.material.textfield.TextInputLayout>
-
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/joinButton"
+    <!-- 空状态提示 -->
+    <TextView
+        android:id="@+id/emptyStateText"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="加入实验"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:text="暂无加入的实验"
+        android:textColor="#666666"
         android:textSize="16sp"
-        android:padding="12dp"
-        android:backgroundTint="#2196F3"/>
+        android:gravity="center"
+        android:visibility="gone"/>
 
 </LinearLayout>

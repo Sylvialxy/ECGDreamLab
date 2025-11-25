@@ -123,9 +123,9 @@ class EcgLabelRepository private constructor(
     suspend fun deleteLabel(label: EcgLabel) {
         val sessionId = currentSessionId.value ?: throw IllegalStateException("User ID not set")
         try {
-            val entity = EcgLabelConverter.toEntity(label, sessionId)
-            dao.deleteLabel(entity)
-            Log.d("EcgLabelRepository", "Successfully deleted label")
+            val startTime = label.startTime.format(timeFormatter)
+            dao.deleteLabelByStartTime(sessionId, startTime)
+            Log.d("EcgLabelRepository", "Successfully deleted label with startTime: $startTime")
         } catch (e: Exception) {
             Log.e("EcgLabelRepository", "Error deleting label", e)
             throw e

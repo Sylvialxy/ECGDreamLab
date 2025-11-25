@@ -111,7 +111,7 @@ class MakeLabelFragment : Fragment() {
                     val currentLabel = labels.find { it.endTime == null }
                     if (currentLabel != null) {
                         // 更新UI状态
-                        statusLabel.text = getLabelDisplayName(currentLabel.labelType)
+                        statusLabel.text = getLabelDisplayName(currentLabel.labelType, currentLabel.customName)
                         statusLayout.visibility = View.VISIBLE
                         chronometer.visibility = View.VISIBLE
                         view?.findViewById<View>(R.id.selectlabel_button)?.visibility = View.GONE
@@ -178,25 +178,36 @@ class MakeLabelFragment : Fragment() {
         val dialog = AlertDialog.Builder(requireContext()).setView(dialogView).create()
 
         // 获取视图中的控件
-        val stateSpinner = dialogView.findViewById<Spinner>(R.id.state_spinner)
+        val primarySpinner = dialogView.findViewById<Spinner>(R.id.primary_label_spinner)
+        val secondarySpinner = dialogView.findViewById<Spinner>(R.id.secondary_label_spinner)
         val hourPicker = dialogView.findViewById<NumberPicker>(R.id.hour_picker)
         val minutePicker = dialogView.findViewById<NumberPicker>(R.id.minute_picker)
         val timerModeSwitch = dialogView.findViewById<Switch>(R.id.timer_mode_switch)
         val startButton = dialogView.findViewById<Button>(R.id.start_button)
         val cancelButton = dialogView.findViewById<Button>(R.id.cancel_button)
-        val customNameInput = dialogView.findViewById<EditText>(R.id.custom_name_input)
 
+        // 定义一级标签和二级标签的映射关系
+        val primaryLabels = arrayOf("睡眠", "日间")
+        val secondaryLabelsMap = mapOf(
+            "睡眠" to arrayOf("有干预", "无干预"),
+            "日间" to arrayOf("静息", "吃饭", "运动", "认知训练", "放松训练", "激励训练", "评估模式")
+        )
 
+        // 设置一级标签下拉选项
+        val primaryAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, primaryLabels)
+        primarySpinner.adapter = primaryAdapter
 
-        // 设置状态下拉选项
-        val states = arrayOf("睡眠", "静息", "吃饭", "运动", "认知训练", "放松训练", "激励训练", "评估模式", "自定义")
-        val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, states)
-        stateSpinner.adapter = adapter
+        // 设置二级标签下拉选项（初始显示睡眠的二级标签）
+        var secondaryAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, secondaryLabelsMap["睡眠"]!!)
+        secondarySpinner.adapter = secondaryAdapter
 
-        stateSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+        // 一级标签选择监听器，实现联动
+        primarySpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val selectedLabel = parent?.getItemAtPosition(position).toString()
-                customNameInput.visibility = if (selectedLabel == "自定义") View.VISIBLE else View.GONE
+                val selectedPrimary = parent?.getItemAtPosition(position).toString()
+                val secondaryLabels = secondaryLabelsMap[selectedPrimary] ?: emptyArray()
+                secondaryAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, secondaryLabels)
+                secondarySpinner.adapter = secondaryAdapter
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -209,9 +220,13 @@ class MakeLabelFragment : Fragment() {
         minutePicker.maxValue = 59
 
         startButton.setOnClickListener {
-            val selectedState = stateSpinner.selectedItem.toString()
-            val labelType = fromChineseLabel(selectedState)
-            selectedLabelType = labelType
+            val selectedPrimary = primarySpinner.selectedItem.toString()
+            val selectedSecondary = secondarySpinner.selectedItem.toString()
+            // 使用"-"拼接一级标签和二级标签
+            val fullLabel = "$selectedPrimary-$selectedSecondary"
+            
+            // 使用 CUSTOM 类型，并将完整标签存储在 customName 中
+            selectedLabelType = LabelType.CUSTOM
 
             val hour = hourPicker.value
             val minute = minutePicker.value
@@ -219,7 +234,7 @@ class MakeLabelFragment : Fragment() {
             val totalMillis = (hour * 60 + minute) * 60 * 1000L
 
             dialog.dismiss()
-            showStartReminderDialog(isCountdown, totalMillis, selectedState)
+            showStartReminderDialog(isCountdown, totalMillis, fullLabel)
         }
 
         cancelButton.setOnClickListener {
@@ -236,7 +251,8 @@ class MakeLabelFragment : Fragment() {
         val cancelButton = view.findViewById<Button>(R.id.btn_cancel)
         val dialogMessage = view.findViewById<TextView>(R.id.messageText)
 
-        val labelText = getLabelDisplayName(selectedLabelType)
+        // state 现在包含完整的两级标签（如"睡眠-有干预"）
+        val labelText = state
         dialogMessage.text = "您是否要开始【$labelText】？"
 
         val dialog = AlertDialog.Builder(requireContext())
@@ -264,7 +280,7 @@ class MakeLabelFragment : Fragment() {
                         labelType = selectedLabelType,
                         startTime = now,
                         endTime = null,
-                        customName = if (selectedLabelType == LabelType.CUSTOM) "自定义标签" else null
+                        customName = state  // 存储完整的两级标签字符串（用"-"拼接）
                     )
                     viewModel.addLabel(newLabel)
                     
@@ -318,7 +334,7 @@ class MakeLabelFragment : Fragment() {
                 return@launch
             }
 
-            val labelName = getLabelDisplayName(currentLabel.labelType)
+            val labelName = getLabelDisplayName(currentLabel.labelType, currentLabel.customName)
             val duration = Duration.between(currentLabel.startTime, LocalDateTime.now())
             val hours = duration.toHours()
             val minutes = duration.toMinutes() % 60
@@ -394,7 +410,7 @@ class MakeLabelFragment : Fragment() {
                     try {
                         val statusList = labels.map { label ->
                             CollectionStatus(
-                                state = getLabelDisplayName(label.labelType),
+                                state = getLabelDisplayName(label.labelType, label.customName),
                                 startTime = formatDateTime(label.startTime),
                                 endTime = label.endTime?.let { formatDateTime(it) } ?: "进行中"
                             )
@@ -664,7 +680,12 @@ class MakeLabelFragment : Fragment() {
         }
     }
 
-    private fun getLabelDisplayName(type: LabelType): String {
+    private fun getLabelDisplayName(type: LabelType, customName: String? = null): String {
+        // 如果 customName 包含"-"，说明是两级标签格式，直接返回
+        if (customName != null && customName.contains("-")) {
+            return customName
+        }
+        
         return when (type) {
             LabelType.SLEEP -> "睡眠"
             LabelType.REST -> "静息"
@@ -674,7 +695,7 @@ class MakeLabelFragment : Fragment() {
             LabelType.RELAXATION_TRAINING -> "放松训练"
             LabelType.MOTIVATIONAL_TRAINING -> "激励训练"
             LabelType.ASSESSMENT_MODE -> "评估模式"
-            LabelType.CUSTOM -> "自定义"
+            LabelType.CUSTOM -> customName ?: "自定义"
         }
     }
 

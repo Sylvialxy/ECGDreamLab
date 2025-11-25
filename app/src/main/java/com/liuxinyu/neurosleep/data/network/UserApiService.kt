@@ -1,6 +1,7 @@
 package com.liuxinyu.neurosleep.data.network
 
-import com.liuxinyu.neurosleep.feature.home.experiment.Experimentvo
+import com.google.gson.annotations.SerializedName
+import com.liuxinyu.neurosleep.feature.home.experiment.StudyVO
 import com.liuxinyu.neurosleep.core.auth.LoginResponse
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
@@ -27,11 +28,6 @@ interface UserApiService {
         @Body request: LoginRequest
     ): ApiResponse<LoginResponse>
 
-    @GET("/user/experiments")
-    suspend fun getExperiments(
-        @Header("Authorization") token: String
-    ): ApiResponse<List<Experimentvo>>
-
     // 获取预签名上传URL
     @POST("/api/files/presigned-upload")
     suspend fun getPresignedUploadUrls(
@@ -52,19 +48,26 @@ interface UserApiService {
         @Body request: CompleteMultipartUploadRequest,
         @Header("Authorization") token: String
     ): ApiResponse<String>
-    
-    // 文件上传回调接口
-    @POST("/api/files/presigned-upload-recall")
-    suspend fun fileUploadRecall(
-        @Body request: FileUploadRecallRequest,
-        @Header("Authorization") token: String
-    ): ApiResponse<Unit>
 
-    @POST("experiment/join")
-    suspend fun joinExperiment(
-        @Query("inviteCode") inviteCode: String,
+    // 创建标签记录（在上传文件之前调用）
+    @POST("/api/files/status-label")
+    suspend fun createLabels(
+        @Body request: CreateLabelsRequest,
         @Header("Authorization") token: String
-    ): Response<Unit>
+    ): ApiResponse<CreateLabelsResponse>
+
+    // 获取已加入的实验列表
+    @GET("/api/study/list")
+    suspend fun getJoinedStudies(
+        @Header("Authorization") token: String
+    ): ApiResponse<List<StudyVO>>
+
+    // 获取睡眠阶段预测数据
+    @POST("/api/algorithm/sleep-stage-app")
+    suspend fun getSleepStagePredictions(
+        @Body request: SleepStageRequest,
+        @Header("Authorization") token: String
+    ): ApiResponse<SleepStageResponse>
 }
 
 // 通用响应模型
@@ -91,13 +94,23 @@ data class PresignedUploadRequest(
 )
 
 data class FileUploadRequest(
+    @SerializedName("originalFilename")
     val originalFilename: String,
+
+    @SerializedName("contentType")
     val contentType: String = "application/bin", // 默认值
+
+    @SerializedName("partCount")
     val partCount: Int,
-    val SNCode: String,
-    // 保留额外字段以备用
-    val experimentId: Int? = null,
-    val labelDTO: String? = null // JSON字符串形式的标签数据
+
+    @SerializedName("deviceSn")  // 使用 deviceSn 与创建标签请求保持一致
+    val deviceSn: String,
+
+    @SerializedName("studyId")  // 后端使用 studyId
+    val studyId: Int? = null,
+
+    @SerializedName("collectionStartTime")  // 收集开始时间
+    val collectionStartTime: String? = null
 )
 
 // 旧版请求类改名保留兼容
@@ -141,12 +154,65 @@ data class UploadPart(
     val etag: String
 )
 
-// 文件上传回调请求
-data class FileUploadRecallRequest(
-    val recallList: List<FileUploadRecallItem>
+// 创建标签请求 - 匹配后端 /api/files/status-label 的实际要求
+// 注意：虽然文档中没有，但后端实际需要 studyId 字段
+data class CreateLabelsRequest(
+    @SerializedName("deviceSn")
+    val deviceSn: String,                    // 设备 SN
+
+    @SerializedName("studyId")
+    val studyId: Int,                        // 实验 ID（后端必需）
+
+    @SerializedName("collectionStartTime")
+    val collectionStartTime: String,         // 收集开始时间
+
+    @SerializedName("statusLabels")
+    val statusLabels: List<StatusLabel>      // 标签值列表
 )
 
-data class FileUploadRecallItem(
-    val objectName: String,
-    val contentType: String = ""
+// 状态标签
+data class StatusLabel(
+    @SerializedName("type")
+    val type: String,                        // 一级标签（如"睡觉"）
+
+    @SerializedName("recordingStartTime")
+    val recordingStartTime: String,          // 记录开始时间
+
+    @SerializedName("status")
+    val status: String,                      // 二级标签（如"无干预"）
+
+    @SerializedName("eventStartTime")
+    val eventStartTime: String,              // 事件开始时间
+
+    @SerializedName("eventEndTime")
+    val eventEndTime: String,                // 事件结束时间
+
+    @SerializedName("startSamplePoint")
+    val startSamplePoint: Long = 0,          // 开始采样点（默认0）
+
+    @SerializedName("endSamplePoint")
+    val endSamplePoint: Long = 0             // 结束采样点（默认0）
+)
+
+// 创建标签响应
+data class CreateLabelsResponse(
+    @SerializedName("fileId")
+    val fileId: Int? = null,    // 文件ID（后端返回）
+    val labelId: Long? = null,  // 创建的标签ID（保留兼容）
+    val message: String? = null
+)
+
+// 睡眠阶段预测请求
+data class SleepStageRequest(
+    @SerializedName("fileId")
+    val fileId: Int  // 文件ID
+)
+
+// 睡眠阶段预测响应
+data class SleepStageResponse(
+    @SerializedName("predictions")
+    val predictions: List<Int>,  // 预测结果数组：0=Wake, 1=N1, 2=N2, 3=N3, 4=REM
+
+    @SerializedName("collectionStartTime")
+    val collectionStartTime: String  // 采集开始时间，格式："2025-02-13T15:53:50"
 )

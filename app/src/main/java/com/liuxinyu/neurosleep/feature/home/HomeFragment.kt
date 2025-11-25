@@ -38,6 +38,8 @@ import com.liuxinyu.neurosleep.data.network.PresignedUploadRequest
 import com.liuxinyu.neurosleep.data.network.CompleteMultipartUploadRequest
 import com.liuxinyu.neurosleep.data.network.UploadPart
 import com.liuxinyu.neurosleep.data.network.FileUploadRequest
+import com.liuxinyu.neurosleep.data.network.CreateLabelsRequest
+import com.liuxinyu.neurosleep.data.network.StatusLabel
 import com.liuxinyu.neurosleep.data.repository.EcgLabelRepository
 import com.liuxinyu.neurosleep.databinding.FragmentHomeBinding
 import com.liuxinyu.neurosleep.feature.home.experiment.JoinExperimentFragment
@@ -45,6 +47,8 @@ import com.liuxinyu.neurosleep.feature.home.label.MakeLabelFragment
 import com.liuxinyu.neurosleep.feature.home.viewmodel.EcgLabelViewModel
 import com.liuxinyu.neurosleep.feature.home.viewmodel.EcgLabelViewModelFactory
 import com.liuxinyu.neurosleep.util.user.AuthManager
+import com.liuxinyu.neurosleep.core.ble.ByteUtil
+import com.liuxinyu.neurosleep.util.FormattedTime
 import com.yabu.livechart.model.DataPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,8 +64,6 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.LinkedList
 import java.util.Timer
-import com.liuxinyu.neurosleep.data.network.FileUploadRecallItem
-import com.liuxinyu.neurosleep.data.network.FileUploadRecallRequest
 
 class HomeFragment : Fragment() {
 
@@ -294,8 +296,26 @@ class HomeFragment : Fragment() {
 
         // 直接检查标签并开始上传，如果 token 无效会在上传时处理
         Log.d(TAG, "Starting upload process...")
+        Log.d(TAG, "Device SN: $snCode")
 
-        val experimentId = 1  // 示例 ExperimentId，可为 null
+        // 从 SharedPreferences 获取当前选中的实验 ID 和名称（用于 presigned-upload 接口）
+        val experimentPrefs = requireContext().getSharedPreferences("EXPERIMENT_PREFS", Context.MODE_PRIVATE)
+        val studyId = experimentPrefs.getInt("SELECTED_EXPERIMENT_ID", -1)
+        val studyName = experimentPrefs.getString("SELECTED_EXPERIMENT_NAME", null)
+
+        if (studyId == -1) {
+            Toast.makeText(requireContext(), "请先选择实验\n点击实验列表中的实验进行选择", Toast.LENGTH_LONG).show()
+            // 跳转到加入实验页面
+            val joinExperimentFragment = JoinExperimentFragment()
+            parentFragmentManager.beginTransaction()
+                .replace(R.id.fragment_container, joinExperimentFragment)
+                .addToBackStack(null)
+                .commit()
+            return
+        }
+
+        Log.d(TAG, "Using study ID: $studyId, name: $studyName")
+
         val currentLabels = viewModel.labels.value
         Log.d(TAG, "Current labels size: ${currentLabels.size}")
 
@@ -317,15 +337,47 @@ class HomeFragment : Fragment() {
                     // 结束未完成的标签
                     unfinishedLabel.endTime = LocalDateTime.now()
                     viewModel.updateLabel(unfinishedLabel)
-                    // 继续上传流程
-                    proceedWithUpload(uri, inputStream, fileSize, fileName, bufferSize, totalChunks, snCode, token, experimentId)
+                    // 显示实验确认对话框
+                    showStudyConfirmationDialog(uri, inputStream, fileSize, fileName, bufferSize, totalChunks, snCode, token, studyId, studyName)
                 }
                 .setNegativeButton("取消", null)
                 .show()
         } else {
-            // 没有未完成的标签，直接上传
-            proceedWithUpload(uri, inputStream, fileSize, fileName, bufferSize, totalChunks, snCode, token, experimentId)
+            // 没有未完成的标签，显示实验确认对话框
+            showStudyConfirmationDialog(uri, inputStream, fileSize, fileName, bufferSize, totalChunks, snCode, token, studyId, studyName)
         }
+    }
+
+    /**
+     * 显示实验确认对话框
+     */
+    private fun showStudyConfirmationDialog(
+        uri: Uri,
+        inputStream: java.io.InputStream,
+        fileSize: Long,
+        fileName: String?,
+        bufferSize: Int,
+        totalChunks: Int,
+        snCode: String,
+        token: String,
+        studyId: Int,
+        studyName: String?
+    ) {
+        val message = if (studyName != null) {
+            "确认上传数据到以下实验？\n\n实验名称：$studyName\n实验ID：$studyId"
+        } else {
+            "确认上传数据到实验 ID：$studyId？"
+        }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("确认上传")
+            .setMessage(message)
+            .setPositiveButton("确定上传") { _, _ ->
+                // 继续上传流程
+                proceedWithUpload(uri, inputStream, fileSize, fileName, bufferSize, totalChunks, snCode, token, studyId)
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
 
@@ -339,7 +391,7 @@ class HomeFragment : Fragment() {
         totalChunks: Int,
         snCode: String,
         token: String,
-        experimentId: Int?
+        studyId: Int?
     ) {
         val currentLabels = viewModel.labels.value
         val labelDTO = EcgLabelDTO(
@@ -356,26 +408,133 @@ class HomeFragment : Fragment() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // 第一步：获取预签名上传URL
-                Log.d(TAG, "Step 1: Getting presigned upload URLs")
-                
+                // 确保token格式正确
+                val formattedToken = if (!token.startsWith("Bearer ")) "Bearer $token" else token
+
+                // 第一步：先创建标签记录
+                Log.d(TAG, "Step 1: Creating label records")
+
+                // 将 EcgLabel 转换为后端期望的 StatusLabel 格式
+                // 后端要求格式：YYYY-MM-DDTHH:mm:ss.SSS（包含毫秒）
+                val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS")
+
+                // 从ECG.BIN文件读取采集开始时间
+                val collectionStartTime = getCollectionStartTime(uri)
+                val earliestStartTime = currentLabels.minByOrNull { it.startTime }?.startTime
+
+                // 解析collectionStartTime为LocalDateTime用于计算采样点
+                val collectionStartDateTime = try {
+                    LocalDateTime.parse(collectionStartTime, timeFormatter)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse collectionStartTime: $collectionStartTime", e)
+                    LocalDateTime.now()
+                }
+
+                val statusLabels = currentLabels.mapNotNull { label ->
+                    label.endTime?.let { endTime ->
+                        // 从 customName 中分离一级标签和二级标签
+                        // customName 格式为 "一级标签-二级标签"，例如 "睡眠-无干预"
+                        val (primaryLabel, secondaryLabel) = if (label.customName?.contains("-") == true) {
+                            val parts = label.customName.split("-", limit = 2)
+                            Pair(parts[0], parts.getOrNull(1) ?: "")
+                        } else {
+                            // 如果没有"-"分隔符，使用默认值
+                            Pair(label.customName ?: "未知", "")
+                        }
+
+                        // 计算采样点：采样率为200Hz
+                        val samplingRate = 200L // 每秒200个采样点
+
+                        // 计算事件开始时间相对于采集开始时间的秒数差
+                        val startDuration = java.time.Duration.between(collectionStartDateTime, label.startTime)
+                        val startSeconds = startDuration.seconds
+                        val startSamplePoint = startSeconds * samplingRate
+
+                        // 计算事件结束时间相对于采集开始时间的秒数差
+                        val endDuration = java.time.Duration.between(collectionStartDateTime, endTime)
+                        val endSeconds = endDuration.seconds
+                        val endSamplePoint = endSeconds * samplingRate
+
+                        Log.d(TAG, "Label: $primaryLabel-$secondaryLabel, startSample: $startSamplePoint, endSample: $endSamplePoint")
+
+                        StatusLabel(
+                            type = primaryLabel,  // 一级标签（如"睡眠"）
+                            recordingStartTime = earliestStartTime?.format(timeFormatter) ?: collectionStartTime,
+                            status = secondaryLabel,  // 二级标签（如"无干预"）
+                            eventStartTime = label.startTime.format(timeFormatter),
+                            eventEndTime = endTime.format(timeFormatter),
+                            startSamplePoint = startSamplePoint,
+                            endSamplePoint = endSamplePoint
+                        )
+                    }
+                }
+
+                if (statusLabels.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "没有完成的标签可以上传", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
+                val createLabelsRequest = CreateLabelsRequest(
+                    deviceSn = snCode,
+                    studyId = studyId ?: 1,  // 使用选中的实验 ID，如果为 null 则使用默认值 1
+                    collectionStartTime = collectionStartTime,
+                    statusLabels = statusLabels
+                )
+
+                // 添加调试日志，查看请求内容
+                val requestJson = Gson().toJson(createLabelsRequest)
+                Log.d(TAG, "Creating labels with ${statusLabels.size} status labels")
+                Log.d(TAG, "Device SN: $snCode, Study ID: ${studyId ?: 1}")
+                Log.d(TAG, "Collection Start Time: $collectionStartTime")
+                Log.d(TAG, "Create Labels Request JSON: $requestJson")
+                val createLabelsResponse = retrofit.createLabels(createLabelsRequest, formattedToken)
+                Log.d(TAG, "Create labels response code: ${createLabelsResponse.code}, msg: ${createLabelsResponse.msg}")
+
+                if (createLabelsResponse.code == "00000") {
+                    val fileId = createLabelsResponse.data?.fileId
+                    Log.d(TAG, "Labels created successfully, fileId: $fileId")
+
+                    // 保存 fileId 到 SharedPreferences，后续可能需要使用
+                    if (fileId != null) {
+                        val uploadPrefs = requireContext().getSharedPreferences("UPLOAD_PREFS", Context.MODE_PRIVATE)
+                        uploadPrefs.edit().putInt("LAST_FILE_ID", fileId).apply()
+                        Log.d(TAG, "Saved fileId: $fileId to SharedPreferences")
+                    }
+                } else {
+                    Log.e(TAG, "Failed to create labels: ${createLabelsResponse.msg}")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "创建标签失败: ${createLabelsResponse.msg}", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
+                // 第二步：获取预签名上传URL
+                Log.d(TAG, "Step 2: Getting presigned upload URLs")
+
                 // 使用新的API请求格式
                 val fileRequest = FileUploadRequest(
                     originalFilename = fileName ?: "unknown.bin",
                     contentType = "application/bin",
                     partCount = totalChunks,
-                    SNCode = snCode,
-                    experimentId = experimentId,
-                    labelDTO = json
+                    deviceSn = snCode,  // 使用 deviceSn 与创建标签请求保持一致
+                    studyId = studyId,  // 使用 studyId 字段
+                    collectionStartTime = collectionStartTime  // 添加收集开始时间
                 )
-                
+
                 val presignedRequest = PresignedUploadRequest(
                     files = listOf(fileRequest)
                 )
 
-                // 确保token格式正确
-                val formattedToken = if (!token.startsWith("Bearer ")) "Bearer $token" else token
+                // 添加调试日志
+                val presignedRequestJson = Gson().toJson(presignedRequest)
+                Log.d(TAG, "Presigned Upload Request JSON: $presignedRequestJson")
+
                 val presignedResponse = retrofit.getPresignedUploadUrls(presignedRequest, formattedToken)
+
+                Log.d(TAG, "Presigned response code: ${presignedResponse.code}, msg: ${presignedResponse.msg}")
+
                 if (presignedResponse.code != "00000" || presignedResponse.data == null) {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(requireContext(), "获取上传URL失败: ${presignedResponse.msg}", Toast.LENGTH_LONG).show()
@@ -393,8 +552,8 @@ class HomeFragment : Fragment() {
 
                 Log.d(TAG, "Got upload meta: uploadId=${uploadMeta.uploadId}, chunks=${uploadMeta.chunkPresignedUrls.size}")
 
-                // 第二步：使用预签名URL上传各个分片
-                Log.d(TAG, "Step 2: Uploading chunks using presigned URLs")
+                // 第三步：使用预签名URL上传各个分片
+                Log.d(TAG, "Step 3: Uploading chunks using presigned URLs")
                 val uploadedParts = mutableListOf<UploadPart>()
                 var uploadSuccess = true
 
@@ -451,7 +610,7 @@ class HomeFragment : Fragment() {
                     }
                 }
 
-                // 第三步：完成多部分上传
+                // 第四步：完成多部分上传
                 if (uploadSuccess && uploadedParts.isNotEmpty()) {
                     completeMultipartUpload(uploadMeta.objectName, uploadMeta.uploadId, uploadedParts, formattedToken, retrofit)
                 }
@@ -480,7 +639,7 @@ class HomeFragment : Fragment() {
         retrofit: UserApiService
     ) {
         try {
-            Log.d(TAG, "Step 3: Completing multipart upload")
+            Log.d(TAG, "Step 4: Completing multipart upload")
             Log.d(TAG, "Object name: $objectName")
             Log.d(TAG, "Upload ID: $uploadId")
             Log.d(TAG, "Parts count: ${parts.size}")
@@ -501,30 +660,6 @@ class HomeFragment : Fragment() {
             
             // 处理响应
             if (completeResponse.code == "00000") {
-                // 调用上传回调接口
-                try {
-                    val recallItem = FileUploadRecallItem(
-                        objectName = objectName,
-                        contentType = "application/bin" // 默认类型，根据实际情况修改
-                    )
-                    
-                    val recallRequest = FileUploadRecallRequest(
-                        recallList = listOf(recallItem)
-                    )
-                    
-                    Log.d(TAG, "Calling upload recall API with objectName: $objectName")
-                    val recallResponse = retrofit.fileUploadRecall(recallRequest, token)
-                    
-                    if (recallResponse.code == "00000") {
-                        Log.d(TAG, "Upload recall successful")
-                    } else {
-                        Log.w(TAG, "Upload recall failed with code: ${recallResponse.code}, message: ${recallResponse.msg}")
-                    }
-                } catch (e: Exception) {
-                    // 记录错误但不影响主流程
-                    Log.e(TAG, "Failed to call upload recall API", e)
-                }
-                
                 viewModel.clearSession()
                 withContext(Dispatchers.Main) {
                     Log.d(TAG, "File upload completed successfully, response: ${completeResponse.data}")
@@ -589,6 +724,61 @@ class HomeFragment : Fragment() {
 
         // 7. 转换为十六进制字符串
         return hashBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * 从ECG.BIN文件读取采集开始时间
+     *
+     * @param uri ECG.BIN文件的URI
+     * @return 格式化的采集开始时间字符串（YYYY-MM-DDTHH:mm:ss.SSS），如果读取失败则使用最早标签时间或当前时间
+     */
+    private fun getCollectionStartTime(uri: Uri): String {
+        val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS")
+
+        try {
+            // 尝试从ECG.BIN文件头读取采集开始时间
+            val contentResolver = requireContext().contentResolver
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                // 读取文件头部的前32字节
+                val headerBytes = ByteArray(32)
+                val bytesRead = inputStream.read(headerBytes)
+
+                if (bytesRead >= 12) {
+                    // 解析ECG.BIN文件头
+                    val formattedTime = ByteUtil.parseEcgBinHeader(headerBytes)
+
+                    if (formattedTime != null) {
+                        // 将FormattedTime转换为LocalDateTime
+                        val collectionStartDateTime = LocalDateTime.of(
+                            formattedTime.year,
+                            formattedTime.month,
+                            formattedTime.day,
+                            formattedTime.hour,
+                            formattedTime.minute,
+                            formattedTime.second
+                        )
+
+                        val result = collectionStartDateTime.format(timeFormatter)
+                        Log.d(TAG, "Collection start time from ECG.BIN: $result")
+                        return result
+                    } else {
+                        Log.w(TAG, "Failed to parse ECG.BIN header, falling back to label time")
+                    }
+                } else {
+                    Log.w(TAG, "ECG.BIN file too short (${bytesRead} bytes), falling back to label time")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading ECG.BIN header", e)
+        }
+
+        // 如果从文件读取失败，回退到使用最早的标签开始时间
+        val currentLabels = viewModel.labels.value
+        val earliestTime = currentLabels.minByOrNull { it.startTime }?.startTime
+
+        val fallbackTime = earliestTime?.format(timeFormatter) ?: LocalDateTime.now().format(timeFormatter)
+        Log.d(TAG, "Using fallback collection start time: $fallbackTime")
+        return fallbackTime
     }
 
     override fun onDestroyView() {

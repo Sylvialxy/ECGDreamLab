@@ -26,6 +26,9 @@ interface EcgLabelDao {
     @Delete
     suspend fun deleteLabel(label: EcgLabelEntity)
 
+    @Query("DELETE FROM ecg_labels WHERE sessionId = :sessionId AND startTime = :startTime")
+    suspend fun deleteLabelByStartTime(sessionId: String, startTime: String)
+
     @Update
     suspend fun updateLabel(label: EcgLabelEntity)
 

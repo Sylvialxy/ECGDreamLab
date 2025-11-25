@@ -140,4 +140,63 @@ object ByteUtil {
         return 1.0f
     }
 
+    /**
+     * 解析ECG.BIN文件头部，提取采集开始时间
+     *
+     * ECG.BIN文件头格式（32字节）：
+     * - 字节 1-6: SN码（16进制12位SN码）
+     * - 字节 7-12: 开始时间（16进制：年前两位、年后两位、月、日、时、分）
+     * - 字节 13: 错误警告
+     * - 字节 14-32: 保留数据位
+     *
+     * 时间格式示例：0x1801020c0000 表示 2024年1月2号12点0分0秒
+     *
+     * @param headerBytes ECG.BIN文件的前32字节
+     * @return FormattedTime对象，包含解析出的时间信息；如果解析失败返回null
+     */
+    fun parseEcgBinHeader(headerBytes: ByteArray): FormattedTime? {
+        if (headerBytes.size < 12) {
+            Log.e("ByteUtil", "Header bytes too short: ${headerBytes.size}, expected at least 12")
+            return null
+        }
+
+        try {
+            // 字节 7-12 (索引 6-11) 包含时间数据
+            val yearPrefix = headerBytes[6].toInt() and 0xFF  // 年份前两位
+            val yearSuffix = headerBytes[7].toInt() and 0xFF  // 年份后两位
+            val month = headerBytes[8].toInt() and 0xFF       // 月份
+            val day = headerBytes[9].toInt() and 0xFF         // 日期
+            val hour = headerBytes[10].toInt() and 0xFF       // 小时
+            val minute = headerBytes[11].toInt() and 0xFF     // 分钟
+
+            // 构建完整年份
+            val fullYear = yearPrefix * 100 + yearSuffix
+
+            Log.d("ByteUtil", "Parsed ECG.BIN header time: $fullYear-$month-$day $hour:$minute")
+            Log.d("ByteUtil", "Raw bytes: ${headerBytes.take(12).joinToString(" ") { String.format("%02X", it.toInt() and 0xFF) }}")
+
+            // 验证时间数据的合理性
+            if (fullYear < 2000 || fullYear > 2100 ||
+                month < 1 || month > 12 ||
+                day < 1 || day > 31 ||
+                hour < 0 || hour > 23 ||
+                minute < 0 || minute > 59) {
+                Log.e("ByteUtil", "Invalid time values in ECG.BIN header: $fullYear-$month-$day $hour:$minute")
+                return null
+            }
+
+            return FormattedTime(
+                year = fullYear,
+                month = month,
+                day = day,
+                hour = hour,
+                minute = minute,
+                second = 0  // ECG.BIN头部只包含到分钟，秒数设为0
+            )
+        } catch (e: Exception) {
+            Log.e("ByteUtil", "Error parsing ECG.BIN header", e)
+            return null
+        }
+    }
+
 }

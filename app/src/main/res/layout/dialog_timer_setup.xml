@@ -7,9 +7,30 @@
     android:padding="16dp"
     >
 
-    <!-- 状态下拉框 -->
+    <!-- 一级标签下拉框 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="一级标签："
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp"/>
+    
     <Spinner
-        android:id="@+id/state_spinner"
+        android:id="@+id/primary_label_spinner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"/>
+
+    <!-- 二级标签下拉框 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="二级标签："
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp"/>
+    
+    <Spinner
+        android:id="@+id/secondary_label_spinner"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="8dp"/>

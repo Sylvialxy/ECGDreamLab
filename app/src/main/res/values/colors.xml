@@ -26,4 +26,11 @@
     <color name="gray_700">#616161</color>
     <color name="gray_800">#424242</color>
     <color name="gray_900">#212121</color>
+
+    <!-- 睡眠阶段颜色 -->
+    <color name="sleep_wake">#FF6B6B</color>
+    <color name="sleep_rem">#4ECDC4</color>
+    <color name="sleep_n1">#95E1D3</color>
+    <color name="sleep_n2">#64B5F6</color>
+    <color name="sleep_n3">#1976D2</color>
 </resources>

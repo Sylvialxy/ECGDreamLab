@@ -101,7 +101,7 @@
                             android:id="@+id/join_experiment_btn"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:text="加入实验"
+                            android:text="实验列表"
                             android:layout_weight="1"
                             app:backgroundTint="@color/blue_500"
                             style="@style/Widget.Material3.Button"/>

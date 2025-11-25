@@ -2,8 +2,11 @@ package com.liuxinyu.neurosleep.feature.home.experiment
 
 import com.google.gson.annotations.SerializedName
 
-data class Experimentvo(
-    @SerializedName("id") val id: Int,
-    @SerializedName("name") val name: String,
-    @SerializedName("description") val description: String
+// 数据模型用于已加入的实验列表
+data class StudyVO(
+    @SerializedName("studyId") val studyId: Int,
+    @SerializedName("studyName") val studyName: String,
+    @SerializedName("studyDescription") val studyDescription: String,
+    @SerializedName("studyStatus") val studyStatus: String,
+    @SerializedName("studyStartTime") val studyStartTime: String
 )

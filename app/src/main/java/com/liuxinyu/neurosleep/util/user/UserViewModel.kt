@@ -9,7 +9,7 @@ import com.liuxinyu.neurosleep.data.network.LoginRequest
 import com.liuxinyu.neurosleep.data.network.RegisterRequest
 import com.liuxinyu.neurosleep.data.network.RetrofitClient
 import com.liuxinyu.neurosleep.data.network.UserApiService
-import com.liuxinyu.neurosleep.feature.home.experiment.Experimentvo
+
 
 class UserViewModel(private val context: Context) : ViewModel() {
     private val apiService = RetrofitClient.getInstance(context).create(UserApiService::class.java)
@@ -61,21 +61,7 @@ class UserViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    // 获取实验列表
-    suspend fun getExperiments(token: String): ApiResponse<List<Experimentvo>> {
-        return try {
-            // 确保token已经包含Bearer前缀，如果没有则添加
-            val formattedToken = if (token.startsWith("Bearer ")) token else "Bearer $token"
-            val response = apiService.getExperiments(formattedToken)
-            if (response.code == "00000") {  // 修改为检查 code == 0
-                response
-            } else {
-                ApiResponse(response.code, response.msg ?: "Unknown error", null)
-            }
-        } catch (e: Exception) {
-            ApiResponse("A0400", "Network error: ${e.message}", null)
-        }
-    }
+
 }
 
 class UserViewModelFactory(private val context: Context) : ViewModelProvider.Factory {

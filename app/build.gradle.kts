@@ -59,6 +59,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:2.1.0")
     implementation("com.github.Pfuster12:LiveChart:1.3.5")
     implementation("org.apache.commons:commons-math3:3.6.1")
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
 
     // Retrofit 网络库
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
