@@ -1,5 +1,6 @@
 package com.liuxinyu.neurosleep.feature.record
 
+import android.app.DatePickerDialog
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -14,6 +15,7 @@ import com.google.android.material.tabs.TabLayoutMediator
 import com.liuxinyu.neurosleep.R
 import com.liuxinyu.neurosleep.feature.record.adapter.ReportPagerAdapter
 import com.liuxinyu.neurosleep.feature.record.viewmodel.RecordViewModel
+import java.util.Calendar
 
 /**
  * 记录页面Fragment - 显示睡眠报告和HRV报告
@@ -42,6 +44,9 @@ class RecordFragment : Fragment() {
         // 初始化ViewModel
         viewModel = ViewModelProvider(this)[RecordViewModel::class.java]
 
+        // 设置Context到ViewModel，用于日期切换时加载数据
+        viewModel.setContext(requireContext())
+
         // 初始化视图
         initViews(view)
 
@@ -61,6 +66,15 @@ class RecordFragment : Fragment() {
         tvDate = view.findViewById(R.id.tvDate)
         tabLayout = view.findViewById(R.id.tabLayout)
         viewPager = view.findViewById(R.id.viewPager)
+
+        // 为日期TextView的父容器设置点击事件
+        tvDate.parent?.let { parent ->
+            if (parent is View) {
+                parent.setOnClickListener {
+                    showDatePickerDialog()
+                }
+            }
+        }
     }
 
     private fun setupViewPager() {
@@ -85,6 +99,36 @@ class RecordFragment : Fragment() {
         btnNextDay.setOnClickListener {
             viewModel.nextDay()
         }
+    }
+
+    /**
+     * 显示日期选择对话框
+     */
+    private fun showDatePickerDialog() {
+        val calendar = Calendar.getInstance()
+        viewModel.currentDate.value?.let {
+            calendar.time = it
+        }
+
+        val year = calendar.get(Calendar.YEAR)
+        val month = calendar.get(Calendar.MONTH)
+        val day = calendar.get(Calendar.DAY_OF_MONTH)
+
+        val datePickerDialog = DatePickerDialog(
+            requireContext(),
+            { _, selectedYear, selectedMonth, selectedDay ->
+                // 用户选择日期后的回调
+                viewModel.setDate(selectedYear, selectedMonth, selectedDay)
+            },
+            year,
+            month,
+            day
+        )
+
+        // 设置日期选择器的最大日期为今天（不能选择未来日期）
+        datePickerDialog.datePicker.maxDate = System.currentTimeMillis()
+
+        datePickerDialog.show()
     }
 
     private fun observeData() {

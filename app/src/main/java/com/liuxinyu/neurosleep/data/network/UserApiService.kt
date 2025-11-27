@@ -68,6 +68,13 @@ interface UserApiService {
         @Body request: SleepStageRequest,
         @Header("Authorization") token: String
     ): ApiResponse<SleepStageResponse>
+
+    // 获取睡眠报告数据
+    @POST("/api/algorithm/sleep-report-app")
+    suspend fun getSleepReport(
+        @Body request: SleepReportRequest,
+        @Header("Authorization") token: String
+    ): ApiResponse<SleepReportApiResponse>
 }
 
 // 通用响应模型
@@ -205,7 +212,10 @@ data class CreateLabelsResponse(
 // 睡眠阶段预测请求
 data class SleepStageRequest(
     @SerializedName("fileId")
-    val fileId: Int  // 文件ID
+    val fileId: Int,  // 文件ID
+
+    @SerializedName("date")
+    val date: String  // 日期，格式："2025-11-07"
 )
 
 // 睡眠阶段预测响应
@@ -215,4 +225,61 @@ data class SleepStageResponse(
 
     @SerializedName("collectionStartTime")
     val collectionStartTime: String  // 采集开始时间，格式："2025-02-13T15:53:50"
+)
+
+// 睡眠报告请求
+data class SleepReportRequest(
+    @SerializedName("fileId")
+    val fileId: Int,  // 文件ID
+
+    @SerializedName("date")
+    val date: String  // 日期，格式："2025-11-07"
+)
+
+// 睡眠报告响应
+data class SleepReportApiResponse(
+    @SerializedName("total_recording_time_min")
+    val totalRecordingTimeMin: Double,  // 总记录时间（分钟）
+
+    @SerializedName("total_sleep_time_min")
+    val totalSleepTimeMin: Double,  // 总睡眠时间（分钟）
+
+    @SerializedName("sleep_score")
+    val sleepScore: Int,  // 睡眠评分
+
+    @SerializedName("sleep_efficiency")
+    val sleepEfficiency: Double,  // 睡眠效率（百分比）
+
+    @SerializedName("awakening_count")
+    val awakeningCount: Int,  // 觉醒次数
+
+    @SerializedName("stage_transitions")
+    val stageTransitions: Int,  // 阶段转换次数
+
+    @SerializedName("percent_wake_trt")
+    val percentWakeTrt: Double,  // 清醒占总记录时间百分比
+
+    @SerializedName("percent_n1_tst")
+    val percentN1Tst: Double,  // N1占总睡眠时间百分比
+
+    @SerializedName("percent_n2_tst")
+    val percentN2Tst: Double,  // N2占总睡眠时间百分比
+
+    @SerializedName("percent_n3_tst")
+    val percentN3Tst: Double,  // N3占总睡眠时间百分比
+
+    @SerializedName("percent_rem_tst")
+    val percentRemTst: Double,  // REM占总睡眠时间百分比
+
+    @SerializedName("rem_latency_min")
+    val remLatencyMin: Double,  // REM潜伏期（分钟）
+
+    @SerializedName("wake_after_sleep_onset_min")
+    val wakeAfterSleepOnsetMin: Double,  // 入睡后清醒时间（分钟）
+
+    @SerializedName("sleep_latency_min")
+    val sleepLatencyMin: Double,  // 入睡潜伏期（分钟）
+
+    @SerializedName("long_wake_count_gt_5min")
+    val longWakeCountGt5min: Int  // 大于5分钟的清醒次数
 )
